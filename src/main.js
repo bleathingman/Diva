@@ -5,7 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const WIDTH = 300;
+const WIDTH = 300; // largeur à l'échelle 1 ; l'interface est toujours dessinée sur cette base
+const MIN_SCALE = 0.75;
+const MAX_SCALE = 1.6;
 const SNAP_DISTANCE = 32;
 const SNAP_GAP = 8;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
@@ -31,6 +33,9 @@ let installedList = [];
 let lastSavedConfig = '';
 let quitting = false;
 let hovered = false;
+let currentScale = 1;
+let contentHeight = 400; // hauteur du widget en pixels d'interface, avant mise à l'échelle
+let resizeDrag = null;
 let blurGuard = false; // vrai pendant un menu ou une boîte de dialogue : la perte de focus est normale
 let hiddenByBlurAt = 0;
 
@@ -169,7 +174,7 @@ async function getAppIcon({ open, iconFile } = {}) {
 
 const SECTION_KEYS = {
   grid: ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'],
-  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity'],
+  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity', 'scale'],
 };
 
 function gridSettings() {
@@ -179,7 +184,7 @@ function gridSettings() {
 function windowSettings() {
   // alwaysOnTop était à la racine de la config avant le panneau Réglages : on le reprend.
   return {
-    alwaysOnTop: config?.alwaysOnTop ?? true, hideOnBlur: false, snapToEdges: true, idleOpacity: 100,
+    alwaysOnTop: config?.alwaysOnTop ?? true, hideOnBlur: false, snapToEdges: true, idleOpacity: 100, scale: 1,
     ...config?.window,
   };
 }
@@ -496,10 +501,11 @@ function createWindow() {
     screen.getAllDisplays().some(({ workArea: a }) =>
       saved.x >= a.x && saved.x < a.x + a.width && saved.y >= a.y && saved.y < a.y + a.height);
   const { x, y } = visibleOnScreen ? saved : defaultPosition();
+  currentScale = clampScale(windowSettings().scale);
 
   win = new BrowserWindow({
     x, y,
-    width: WIDTH,
+    width: Math.round(WIDTH * currentScale),
     height: 400,
     frame: false,
     transparent: true,
@@ -512,6 +518,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       sandbox: true,
+      zoomFactor: currentScale,
     },
   });
 
@@ -541,7 +548,52 @@ function applyWindowSettings() {
   // Opacité réglée au repos, pleine quand la souris est dessus.
   const opacity = Math.min(100, Math.max(30, Number(settings.idleOpacity) || 100));
   win.setOpacity(hovered ? 1 : opacity / 100);
+  const scale = clampScale(settings.scale);
+  if (Math.abs(scale - currentScale) > 0.001) applyScale(scale, stuckToRight());
   win.webContents.send('window-settings', settings);
+}
+
+// --- Taille : tout le widget est mis à l'échelle (zoom), la mise en page ne change pas ---
+
+const clampScale = (scale) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(scale) || 1));
+
+function stuckToRight() {
+  const bounds = win.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  return Math.abs(bounds.x + bounds.width - (area.x + area.width - SNAP_GAP)) <= 1;
+}
+
+// anchorRight : le bord droit reste en place (poignée de gauche, ou widget collé à droite).
+function applyScale(scale, anchorRight = false) {
+  const bounds = win.getBounds();
+  currentScale = scale;
+  win.webContents.setZoomFactor(scale);
+  const width = Math.round(WIDTH * scale);
+  const x = anchorRight ? bounds.x + bounds.width - width : bounds.x;
+  win.setBounds({ x, y: bounds.y, width, height: bounds.height });
+  // La mise en page ne change pas de taille, l'interface ne redemandera pas de hauteur.
+  resizeWindow(contentHeight);
+}
+
+// Poignées des coins du bas : la largeur suit la souris, l'échelle suit la largeur.
+function startResizeDrag(side) {
+  resizeDrag = { side, cursorX: screen.getCursorScreenPoint().x, width: win.getBounds().width };
+}
+
+function moveResizeDrag() {
+  if (!resizeDrag) return;
+  const delta = screen.getCursorScreenPoint().x - resizeDrag.cursorX;
+  const width = resizeDrag.width + (resizeDrag.side === 'left' ? -delta : delta);
+  const scale = clampScale(width / WIDTH);
+  if (Math.abs(scale - currentScale) > 0.002) applyScale(scale, resizeDrag.side === 'left');
+}
+
+function endResizeDrag() {
+  if (!resizeDrag) return;
+  const scale = Math.round(currentScale * 100) / 100;
+  applyScale(scale, resizeDrag.side === 'left');
+  resizeDrag = null;
+  updateSection('window', { scale });
 }
 
 // Lâché à moins de SNAP_DISTANCE d'un bord de l'écran : le widget s'y colle, à SNAP_GAP du bord.
@@ -561,15 +613,17 @@ function snapToEdges() {
 }
 
 // Change la hauteur sans sortir de l'écran ; collé en bas, le widget grandit vers le haut.
+// `height` est en pixels d'interface : on applique l'échelle.
 function resizeWindow(height) {
+  contentHeight = height;
   const bounds = win.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
-  const newHeight = Math.min(Math.ceil(height), area.height);
+  const newHeight = Math.min(Math.ceil(height * currentScale), area.height);
   const areaBottom = area.y + area.height;
   const stuckToBottom = Math.abs(bounds.y + bounds.height - (areaBottom - SNAP_GAP)) <= 1;
   let y = stuckToBottom ? areaBottom - SNAP_GAP - newHeight : bounds.y;
   y = Math.max(area.y, Math.min(y, areaBottom - newHeight));
-  win.setBounds({ x: bounds.x, y, width: WIDTH, height: newHeight });
+  win.setBounds({ x: bounds.x, y, width: Math.round(WIDTH * currentScale), height: newHeight });
 }
 
 function toggleWindow() {
@@ -647,6 +701,9 @@ ipcMain.on('media-command', (_event, command) => mediaHelper?.send(command));
 ipcMain.on('audio-command', (_event, command) => audioHelper?.send(command));
 ipcMain.on('hide', () => win.hide());
 ipcMain.on('resize', (_event, height) => resizeWindow(height));
+ipcMain.on('resize-start', (_event, side) => startResizeDrag(side === 'left' ? 'left' : 'right'));
+ipcMain.on('resize-move', () => moveResizeDrag());
+ipcMain.on('resize-end', () => endResizeDrag());
 
 // --- Démarrage -----------------------------------------------------------------------
 

@@ -623,6 +623,9 @@ function renderWindowSettings(settings) {
   $('#hide-on-blur').checked = settings.hideOnBlur;
   $('#snap-to-edges').checked = settings.snapToEdges;
   setSlider($('#idle-opacity'), settings.idleOpacity);
+  for (const button of document.querySelectorAll('[data-scale]')) {
+    button.classList.toggle('active', Math.abs(Number(button.dataset.scale) - settings.scale) < 0.01);
+  }
   if (!$('#idle-opacity').dataset.dragging) $('#idle-opacity-value').textContent = settings.idleOpacity;
 }
 
@@ -639,6 +642,28 @@ bindSlider($('#idle-opacity'), {
 $('#idle-opacity').addEventListener('input', () => {
   $('#idle-opacity-value').textContent = $('#idle-opacity').value;
 });
+
+for (const button of document.querySelectorAll('[data-scale]')) {
+  button.addEventListener('click', () => window.diva.updateWindow({ scale: Number(button.dataset.scale) }));
+}
+
+// Poignées des coins : le processus principal suit lui-même la souris (en pixels d'écran,
+// qui ne bougent pas quand le widget change d'échelle sous le curseur).
+for (const grip of document.querySelectorAll('.resize-grip')) {
+  let frame = null;
+  grip.addEventListener('pointerdown', (event) => {
+    grip.setPointerCapture(event.pointerId);
+    window.diva.resizeStart(grip.dataset.side);
+  });
+  grip.addEventListener('pointermove', (event) => {
+    if (!grip.hasPointerCapture(event.pointerId) || frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      window.diva.resizeMove();
+    });
+  });
+  grip.addEventListener('lostpointercapture', () => window.diva.resizeEnd());
+}
 
 // --- Ajout d'un lien ---
 

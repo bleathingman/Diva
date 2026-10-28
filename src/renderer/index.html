@@ -145,6 +145,15 @@
         <input id="snap-to-edges" type="checkbox" class="switch">
       </label>
       <div class="row">
+        <span>Taille</span>
+        <div id="size-presets" class="segmented">
+          <button data-scale="0.85">Petit</button>
+          <button data-scale="1">Moyen</button>
+          <button data-scale="1.25">Grand</button>
+        </div>
+      </div>
+      <p class="setting-hint">Ou tire un coin du bas du widget pour une taille sur mesure.</p>
+      <div class="row">
         <span>Opacité au repos</span>
         <div class="opacity-control">
           <input id="idle-opacity" class="slider" type="range" min="30" max="100" step="5">
@@ -188,6 +197,9 @@
       <div id="picker-list" class="list scroll"></div>
       <p id="picker-empty" class="empty" hidden>Chargement…</p>
     </div>
+    <!-- Poignées de redimensionnement (coins du bas) -->
+    <div class="resize-grip left" data-side="left" title="Redimensionner"></div>
+    <div class="resize-grip right" data-side="right" title="Redimensionner"></div>
   </main>
 
   <div id="toast" class="toast"></div>
