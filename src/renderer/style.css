@@ -1,0 +1,340 @@
+:root {
+  --bg: rgba(17, 17, 24, 0.94);
+  --surface: rgba(255, 255, 255, 0.06);
+  --surface-hover: rgba(255, 255, 255, 0.12);
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f2f2f7;
+  --muted: #9a9aab;
+  --accent: #8b7bff;
+  --spotify: #1ed760;
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+}
+
+html,
+body {
+  background: transparent;
+  color: var(--text);
+  font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+
+#widget {
+  margin: 8px;
+  padding: 10px 12px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+/* --- Barre de titre (zone de déplacement) --- */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  margin-bottom: 8px;
+  -webkit-app-region: drag;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+.clock {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+
+.icon-button:hover {
+  background: var(--surface-hover);
+}
+
+.icon-button svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- Carte musique --- */
+
+.media {
+  position: relative;
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  grid-template-rows: auto auto;
+  gap: 10px 12px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.media-backdrop {
+  position: absolute;
+  inset: -20px;
+  background-size: cover;
+  background-position: center;
+  filter: blur(24px) saturate(1.4);
+  opacity: 0.35;
+  transition: background-image 0.4s;
+}
+
+.media > *:not(.media-backdrop) {
+  position: relative;
+}
+
+.cover {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cover:not([src]),
+.cover[src=""] {
+  visibility: hidden;
+}
+
+.track {
+  align-self: center;
+  min-width: 0;
+}
+
+.title,
+.artist {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.artist {
+  color: var(--muted);
+}
+
+.controls {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+}
+
+.controls .icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.controls .play {
+  background: var(--text);
+  color: #111;
+}
+
+.controls .play:hover {
+  background: #fff;
+}
+
+.controls .play svg {
+  fill: currentColor;
+}
+
+.play .icon-pause,
+.media.playing .play .icon-play {
+  display: none;
+}
+
+.media.playing .play .icon-pause {
+  display: block;
+}
+
+.spotify-button {
+  grid-column: 1 / -1;
+  display: none;
+  padding: 8px;
+  border-radius: 999px;
+  background: var(--spotify);
+  color: #08140c;
+  font-weight: 600;
+}
+
+.spotify-button:hover {
+  filter: brightness(1.1);
+}
+
+/* Rien en lecture : on remplace les contrôles par le bouton Spotify. */
+.media.idle .controls {
+  display: none;
+}
+
+.media.idle .spotify-button {
+  display: block;
+}
+
+/* --- Setups et apps --- */
+
+h2 {
+  margin: 14px 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.setups {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 6px;
+}
+
+.setup {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 8px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  transition: background 0.15s, transform 0.1s;
+}
+
+.setup:hover {
+  background: var(--surface-hover);
+}
+
+.setup:active,
+.app:active {
+  transform: scale(0.96);
+}
+
+.setup.running {
+  border-color: var(--accent);
+}
+
+.apps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 2px 6px;
+  border-radius: 10px;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.app:hover {
+  background: var(--surface-hover);
+}
+
+.app-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  font-size: 22px;
+}
+
+.app-icon img {
+  width: 32px;
+  height: 32px;
+}
+
+.app-icon .letter {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--accent);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.app-name {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* --- Notification --- */
+
+.toast {
+  position: fixed;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #2a2a38;
+  border: 1px solid var(--border);
+  font-size: 12px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+  white-space: pre-line;
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: none;
+}

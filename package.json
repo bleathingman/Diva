@@ -1,0 +1,14 @@
+{
+  "name": "diva",
+  "productName": "Diva",
+  "version": "0.1.0",
+  "description": "Widget companion pour le PC : musique, lanceur d'apps, setups.",
+  "main": "src/main.js",
+  "private": true,
+  "scripts": {
+    "start": "set ELECTRON_RUN_AS_NODE=&& electron ."
+  },
+  "devDependencies": {
+    "electron": "^45.1.0"
+  }
+}
