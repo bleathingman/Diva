@@ -101,9 +101,26 @@ function renderApps(apps) {
   }
 }
 
+let currentConfig = { apps: [], setups: [] };
+let recentApps = [];
+
+// Par défaut la grille montre les apps les plus lancées ; "recent": { "enabled": false }
+// dans la config remet la liste "apps" à la place.
+function renderAppGrid() {
+  const showRecent = currentConfig.recent?.enabled !== false && recentApps.length > 0;
+  $('#apps-title').textContent = showRecent ? 'Récents' : 'Apps';
+  renderApps(showRecent ? recentApps : currentConfig.apps ?? []);
+}
+
 function renderConfig(config) {
+  currentConfig = config;
   renderSetups(config.setups ?? []);
-  renderApps(config.apps ?? []);
+  renderAppGrid();
+}
+
+function renderRecentApps(apps) {
+  recentApps = apps;
+  renderAppGrid();
 }
 
 // --- Démarrage ---
@@ -122,7 +139,9 @@ new ResizeObserver(() => {
 window.diva.onConfig(renderConfig);
 window.diva.onMedia(renderMedia);
 window.diva.onToast(toast);
+window.diva.onRecentApps(renderRecentApps);
 window.diva.getConfig().then(renderConfig);
+window.diva.getRecentApps().then(renderRecentApps);
 
 updateClock();
 setInterval(updateClock, 10_000);

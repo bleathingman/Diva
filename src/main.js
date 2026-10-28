@@ -1,5 +1,5 @@
 const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, shell, screen, nativeImage } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
@@ -8,11 +8,15 @@ const WIDTH = 320;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
 const MEDIA_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'media.ps1');
+const RECENT_APPS_PATH = path.join(__dirname, '..', 'helpers', 'recent-apps.ps1');
+const RECENT_REFRESH_MS = 10 * 60 * 1000;
 
 let win = null;
 let tray = null;
 let config = null;
 let mediaHelper = null;
+let recentApps = [];
+let recentRefreshedAt = 0;
 let quitting = false;
 
 // --- Fichiers utilisateur (%APPDATA%\Diva) -------------------------------------------
@@ -53,6 +57,7 @@ function applyConfig() {
   win?.setAlwaysOnTop(config.alwaysOnTop !== false);
   if (config.hotkey !== previousHotkey) registerHotkey(previousHotkey);
   win?.webContents.send('config', config);
+  refreshRecentApps();
 }
 
 // --- Lancement d'apps ----------------------------------------------------------------
@@ -64,6 +69,11 @@ const isUri = (value) => /^[a-z][a-z0-9+.-]+:/i.test(value) && !/^[a-z]:[\\/]/i.
 
 async function openTarget(target) {
   const expanded = expandEnv(target);
+  // Apps du Store et identifiants Windows : seul l'Explorateur sait ouvrir "shell:AppsFolder\...".
+  if (expanded.toLowerCase().startsWith('shell:')) {
+    spawn('explorer.exe', [expanded], { detached: true, stdio: 'ignore' }).unref();
+    return null;
+  }
   if (isUri(expanded)) {
     await shell.openExternal(expanded);
     return null;
@@ -72,8 +82,13 @@ async function openTarget(target) {
   return error || null;
 }
 
+// Même règle que recent-apps.ps1 : "Visual Studio Code" et "visual-studio code" sont la même app.
+const normalize = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// Les apps de la config passent avant les récentes : elles gardent leur emoji et leur chemin.
 function findApp(name) {
-  return config.apps.find((entry) => entry.name.toLowerCase() === name.toLowerCase());
+  const id = normalize(name);
+  return [...config.apps, ...recentApps].find((entry) => normalize(entry.name) === id);
 }
 
 async function launchApp(name) {
@@ -110,7 +125,12 @@ function resolveIconSource(file) {
 
 async function getAppIcon(name) {
   const entry = findApp(name);
-  if (!entry || isUri(expandEnv(entry.open))) return null;
+  if (!entry) return null;
+  if (entry.iconFile) {
+    const image = nativeImage.createFromPath(entry.iconFile);
+    return image.isEmpty() ? null : image.toDataURL();
+  }
+  if (isUri(expandEnv(entry.open))) return null;
   try {
     const source = resolveIconSource(expandEnv(entry.open));
     // Un .ico se charge tel quel ; getFileIcon donnerait l'icône du type de fichier.
@@ -121,6 +141,39 @@ async function getAppIcon(name) {
   } catch {
     return null;
   }
+}
+
+// --- Apps récentes (helpers/recent-apps.ps1) -----------------------------------------
+
+function recentSettings() {
+  return { enabled: true, count: 8, days: 30, exclude: [], ...config.recent };
+}
+
+function refreshRecentApps() {
+  const settings = recentSettings();
+  recentRefreshedAt = Date.now();
+  if (!settings.enabled) {
+    recentApps = [];
+    win?.webContents.send('recent-apps', recentApps);
+    return;
+  }
+  execFile('powershell.exe', [
+    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', RECENT_APPS_PATH, '-Days', String(settings.days),
+  ], { windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
+    if (error) {
+      console.error('[recent-apps]', error.message);
+      return;
+    }
+    try {
+      const excluded = new Set(settings.exclude.map(normalize));
+      recentApps = JSON.parse(stdout)
+        .filter((entry) => !excluded.has(normalize(entry.name)))
+        .slice(0, settings.count);
+      win?.webContents.send('recent-apps', recentApps);
+    } catch (parseError) {
+      console.error('[recent-apps]', parseError.message);
+    }
+  });
 }
 
 // --- Contrôle média (helpers/media.ps1) ----------------------------------------------
@@ -196,6 +249,7 @@ function toggleWindow() {
   } else {
     win.show();
     win.focus();
+    if (Date.now() - recentRefreshedAt > 60_000) refreshRecentApps();
   }
 }
 
@@ -232,6 +286,7 @@ function createTray() {
 // --- Communication avec l'interface --------------------------------------------------
 
 ipcMain.handle('get-config', () => config);
+ipcMain.handle('get-recent-apps', () => recentApps);
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
 ipcMain.handle('run-setup', (_event, name) => runSetup(name));
 ipcMain.handle('get-app-icon', (_event, name) => getAppIcon(name));
@@ -256,6 +311,8 @@ if (!app.requestSingleInstanceLock()) {
     registerHotkey();
     watchConfig();
     startMediaHelper();
+    refreshRecentApps();
+    setInterval(refreshRecentApps, RECENT_REFRESH_MS);
   });
 
   app.on('before-quit', () => {

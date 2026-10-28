@@ -35,6 +35,18 @@ Clic droit sur l'icône → **Modifier la config**. Le fichier (`%APPDATA%\Diva\
 - `icon` (facultatif) : un emoji. Sans lui, Diva prend la vraie icône de l'app.
 - Un setup liste des **noms** d'apps déclarées dans `apps`.
 
+### Apps récentes
+
+Par défaut, la grille affiche les apps **les plus lancées ces 30 derniers jours** (8 maximum), lues dans l'historique de Windows (le même que « Plus utilisées » du menu Démarrer). Elle se met à jour toutes les 10 minutes et quand on rouvre le widget.
+
+```json
+"recent": { "enabled": true, "count": 8, "days": 30, "exclude": ["Notepad"] }
+```
+
+- `exclude` : noms d'apps à ne jamais afficher.
+- `"enabled": false` : la grille montre la liste `apps` à la place.
+- Windows ne compte que les lancements depuis le menu Démarrer, la barre des tâches ou le bureau (pas les jeux lancés depuis Steam, par exemple). Les outils système et les installeurs sont ignorés.
+
 La config par défaut est dans [src/default-config.json](src/default-config.json).
 
 ## Structure
@@ -46,7 +58,8 @@ src/
 ├── default-config.json
 └── renderer/          # l'interface du widget (HTML/CSS/JS)
 helpers/
-└── media.ps1          # pont avec le contrôle média de Windows (titre, pochette, lecture)
+├── media.ps1          # pont avec le contrôle média de Windows (titre, pochette, lecture)
+└── recent-apps.ps1    # apps les plus lancées, d'après l'historique UserAssist de Windows
 ```
 
 La musique passe par le contrôle média de Windows : ça marche avec Spotify, mais aussi YouTube dans le navigateur, etc.

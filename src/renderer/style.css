@@ -311,7 +311,8 @@ h2 {
 
 .apps {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  /* minmax(0, …) : un nom long est coupé au lieu d'élargir sa colonne. */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
 }
 

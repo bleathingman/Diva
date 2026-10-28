@@ -1,6 +1,7 @@
 {
   "hotkey": "Ctrl+Alt+D",
   "alwaysOnTop": true,
+  "recent": { "enabled": true, "count": 8, "days": 30, "exclude": [] },
   "apps": [
     { "name": "Spotify", "open": "spotify:", "icon": "🎵" },
     { "name": "Discord", "open": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Discord Inc\\Discord.lnk" },
