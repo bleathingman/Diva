@@ -41,7 +41,13 @@ function renderSetups(setups) {
     const button = document.createElement('button');
     button.className = 'setup';
     button.title = setup.apps.join(', ');
-    button.textContent = `${setup.icon ?? ''} ${setup.name}`.trim();
+    if (setup.icon) {
+      const icon = document.createElement('span');
+      icon.className = 'setup-icon';
+      icon.textContent = setup.icon;
+      button.append(icon);
+    }
+    button.append(setup.name);
     button.addEventListener('click', async () => {
       button.classList.add('running');
       toast(`Lancement de ${setup.name}…`);
