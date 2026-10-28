@@ -4,6 +4,7 @@ Widget companion pour Windows : contrôle de la musique, volume et lanceur d'app
 
 - **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau).
 - **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son.
+- **Recherche** : taper n'importe quelle lettre sur le widget (ou la loupe) cherche dans les apps installées, épinglées, récentes et les liens ; fait aussi les calculs (`12*4`, `200*15%`, Entrée copie le résultat) et propose une recherche web. ↑ ↓ Entrée, Échap.
 - **Apps et liens** : apps épinglées, sites et dossiers favoris, et les apps les plus lancées (voir plus bas).
 - **Fenêtre** : toujours au premier plan, se cacher quand on clique ailleurs, aimantation aux bords de l'écran, opacité au repos (pleine au survol).
 

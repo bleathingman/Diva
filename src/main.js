@@ -135,7 +135,11 @@ function resolveIconSource(file) {
   if (!file.toLowerCase().endsWith('.lnk')) return file;
   try {
     const link = shell.readShortcutLink(file);
-    return link.icon || link.target || file;
+    // Les outils Windows déclarent souvent "%SystemRoot%\...\x.dll" : variable à remplacer,
+    // et une .dll ne donne pas la bonne icône (il faudrait son index) : on prend alors la cible.
+    const icon = link.icon && expandEnv(link.icon);
+    if (icon && !/\.dll$/i.test(icon) && fs.existsSync(icon)) return icon;
+    return link.target ? expandEnv(link.target) : file;
   } catch {
     return file;
   }
@@ -388,6 +392,67 @@ function getInstalledApps() {
   return installedApps;
 }
 
+// --- Recherche : tout ce qui peut se lancer, sans doublons -------------------------
+
+function entryKind(open) {
+  if (/^https?:/i.test(open)) return 'Site';
+  try {
+    if (isPathLike(open) && fs.statSync(expandEnv(open)).isDirectory()) return 'Dossier';
+  } catch {
+    // Chemin introuvable : on le présente comme une app, le lancement dira l'erreur.
+  }
+  return 'App';
+}
+
+// Ce que lance vraiment une entrée : la cible d'un raccourci, sinon le chemin ou le lien.
+function launchTarget(open) {
+  const expanded = expandEnv(open).toLowerCase();
+  if (!expanded.endsWith('.lnk')) return expanded;
+  try {
+    const { target, args } = shell.readShortcutLink(expanded);
+    // Les arguments comptent : Discord et Discord Canary passent par des Update.exe différents,
+    // mais deux jeux Steam passent tous deux par steam.exe avec des arguments différents.
+    return target ? `${target} ${args ?? ''}`.trim().toLowerCase() : expanded;
+  } catch {
+    return expanded;
+  }
+}
+
+// Ordre = priorité en cas de doublon : épinglées, récentes (avec leur nombre de
+// lancements, qui sert au classement), apps de la config, puis toutes les installées.
+async function getSearchEntries() {
+  const installed = await getInstalledApps();
+  const seen = new Set();
+  const entries = [];
+  const add = (entry, source) => {
+    // Doublon si même nom, ou même programme sous un autre nom ("VS Code" et
+    // "Visual Studio Code" pointent tous deux vers Code.exe).
+    const id = normalize(entry.name);
+    const target = `target:${launchTarget(entry.open)}`;
+    if (!id || seen.has(id) || seen.has(target)) return;
+    seen.add(id);
+    seen.add(target);
+    entries.push({
+      name: entry.name, open: entry.open, iconFile: entry.iconFile, icon: entry.icon,
+      source, runs: entry.runs ?? 0, kind: entryKind(entry.open),
+    });
+  };
+  gridSettings().pinned.forEach((entry) => add(withCurrentIcon(entry), 'pinned'));
+  recentApps.forEach((entry) => add(entry, 'recent'));
+  config.apps.forEach((entry) => add(entry, 'app'));
+  installed.forEach((entry) => add(entry, 'app'));
+  return entries;
+}
+
+// Lance un résultat de recherche : par son nom s'il est connu, sinon par sa cible.
+async function openEntry({ name, open } = {}) {
+  const known = typeof name === 'string' ? findApp(name) : null;
+  const target = known?.open ?? open;
+  if (typeof target !== 'string' || !target) return 'Rien à ouvrir';
+  const error = await openTarget(target);
+  return error ? `${name} : ${error}` : null;
+}
+
 // --- Modules permanents : média (helpers/media.ps1) et volume (helpers/audio.ps1) ----
 
 // Lance un script PowerShell qui tourne en continu : chaque ligne JSON qu'il écrit part vers
@@ -564,6 +629,8 @@ ipcMain.handle('add-link', (_event, link) => addLink(link));
 ipcMain.handle('pick-folder', () => pickFolder());
 ipcMain.handle('get-installed-apps', () => getInstalledApps());
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
+ipcMain.handle('get-search-entries', () => getSearchEntries());
+ipcMain.handle('open-entry', (_event, entry) => openEntry(entry));
 ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
 ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
 ipcMain.on('update-window', (_event, patch) => updateSection('window', patch));
@@ -600,9 +667,11 @@ if (!app.requestSingleInstanceLock()) {
     mediaHelper = startHelper(MEDIA_HELPER_PATH, 'media');
     audioHelper = startHelper(AUDIO_HELPER_PATH, 'audio');
     refreshRecentApps();
+    getInstalledApps(); // préchargées : la recherche répond tout de suite
     setInterval(() => {
       installedApps = null;
       refreshRecentApps();
+      getInstalledApps();
     }, RECENT_REFRESH_MS);
   });
 

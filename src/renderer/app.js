@@ -12,6 +12,8 @@ const ICONS = {
   show: '<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   add: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
   check: '<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+  calc: '<svg viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 12h2M14 12h2M8 16h2M14 16h2"/></svg>',
+  web: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
 };
 
 // --- Notification ---
@@ -284,16 +286,19 @@ function renderGrid(next) {
 // --- Vues : principale, réglages, ajout d'app ---
 
 let currentView = 'main';
+const SETTINGS_VIEWS = ['settings', 'picker', 'link'];
 
 function showView(name) {
   currentView = name;
-  for (const view of ['main', 'settings', 'picker', 'link']) {
+  for (const view of ['main', 'search', 'settings', 'picker', 'link']) {
     $(`#view-${view}`).hidden = view !== name;
   }
-  $('#toggle-settings').classList.toggle('active', name !== 'main');
+  $('#toggle-settings').classList.toggle('active', SETTINGS_VIEWS.includes(name));
   if (name === 'settings') renderSettings();
   if (name === 'picker') openPicker();
   if (name === 'link') openLinkForm();
+  if (name === 'search') openSearch();
+  $('#open-search').classList.toggle('active', name === 'search');
 }
 
 function actionButton(icon, title, onClick) {
@@ -439,6 +444,178 @@ function renderPicker() {
 
 $('#picker-search').addEventListener('input', renderPicker);
 
+// --- Recherche ---
+
+const MAX_RESULTS = 7;
+let searchEntries = [];
+let searchResults = [];
+let selectedResult = 0;
+
+async function openSearch() {
+  const input = $('#search-input');
+  input.value = '';
+  input.focus();
+  renderSearch();
+  // Rechargée à chaque ouverture : épinglées et récentes ont pu changer.
+  searchEntries = await window.diva.getSearchEntries();
+  renderSearch();
+}
+
+// Calculatrice : + - * / ^ ( ) et "15%" (= 0,15). Pas d'eval : un petit analyseur.
+function calculate(text) {
+  const source = text.replace(/\s+/g, '').replace(/,/g, '.').replace(/[x×]/gi, '*').replace(/÷/g, '/');
+  if (!/^[\d.+\-*/^%()]+$/.test(source) || !/\d/.test(source) || !/[+\-*/^%]/.test(source.slice(1))) return null;
+  let index = 0;
+  const peek = () => source[index] ?? '';
+  const number = () => {
+    const match = /^\d*\.?\d+/.exec(source.slice(index));
+    if (!match) throw new Error('nombre attendu');
+    index += match[0].length;
+    let value = Number(match[0]);
+    if (peek() === '%') {
+      index++;
+      value /= 100;
+    }
+    return value;
+  };
+  const primary = () => {
+    if (peek() !== '(') return number();
+    index++;
+    const value = sum();
+    if (source[index++] !== ')') throw new Error('parenthèse');
+    return value;
+  };
+  const unary = () => {
+    if (peek() === '-') { index++; return -unary(); }
+    if (peek() === '+') { index++; return unary(); }
+    return primary();
+  };
+  const power = () => {
+    const base = unary();
+    if (peek() !== '^') return base;
+    index++;
+    return base ** power();
+  };
+  const product = () => {
+    let value = power();
+    while (peek() === '*' || peek() === '/') {
+      const operator = source[index++];
+      value = operator === '*' ? value * power() : value / power();
+    }
+    return value;
+  };
+  function sum() {
+    let value = product();
+    while (peek() === '+' || peek() === '-') {
+      const operator = source[index++];
+      value = operator === '+' ? value + product() : value - product();
+    }
+    return value;
+  }
+  try {
+    const value = sum();
+    return index === source.length && Number.isFinite(value) ? Number(value.toPrecision(12)) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Initiales des mots : "Visual Studio Code" -> "vsc".
+const initials = (text) => text.split(/[\s\-_.]+/).map((word) => word[0] ?? '').join('');
+
+// Plus le nom colle à la recherche, plus le score est haut ; on favorise ensuite
+// les épinglées et les apps souvent lancées.
+function scoreEntry(entry, query) {
+  const name = searchable(entry.name);
+  let score;
+  if (name.startsWith(query)) score = 100;
+  else if (name.split(/[\s\-_.]+/).some((word) => word.startsWith(query))) score = 80;
+  else if (name.includes(query)) score = 60;
+  else if (query.length > 1 && initials(name).startsWith(query)) score = 55;
+  else return 0;
+  if (entry.source === 'pinned') score += 15;
+  if (entry.source === 'recent') score += 8 + Math.min(entry.runs, 20) / 2;
+  return score;
+}
+
+function renderSearch() {
+  const raw = $('#search-input').value.trim();
+  const query = searchable(raw);
+  searchResults = [];
+
+  if (query) {
+    const result = calculate(raw);
+    if (result !== null) {
+      const formatted = result.toLocaleString('fr-FR', { maximumFractionDigits: 10 });
+      searchResults.push({ type: 'calc', name: `= ${formatted}`, kind: 'Copier', value: String(result).replace('.', ',') });
+    }
+    searchResults.push(...searchEntries
+      .map((entry) => ({ entry, score: scoreEntry(entry, query) }))
+      .filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score || a.entry.name.localeCompare(b.entry.name))
+      .slice(0, MAX_RESULTS)
+      .map(({ entry }) => ({ type: 'entry', ...entry })));
+    searchResults.push({ type: 'web', name: `Rechercher « ${raw} » sur le web`, kind: 'Web', query: raw });
+  }
+  selectedResult = 0;
+
+  const list = $('#search-results');
+  list.replaceChildren();
+  searchResults.forEach((result, index) => {
+    const kind = document.createElement('span');
+    kind.className = 'row-kind';
+    kind.textContent = result.kind;
+    const { row, icon } = listRow(result, [kind]);
+    row.classList.add('clickable');
+    row.addEventListener('mousemove', () => selectResult(index));
+    row.addEventListener('click', () => activateResult(result));
+    list.append(row);
+    if (result.type === 'entry') fillIcon(result, icon);
+    else icon.innerHTML = result.type === 'calc' ? ICONS.calc : ICONS.web;
+  });
+  selectResult(0);
+}
+
+function selectResult(index) {
+  if (!searchResults.length) return;
+  selectedResult = (index + searchResults.length) % searchResults.length;
+  const rows = $('#search-results').children;
+  for (let i = 0; i < rows.length; i++) rows[i].classList.toggle('selected', i === selectedResult);
+  rows[selectedResult].scrollIntoView({ block: 'nearest' });
+}
+
+async function activateResult(result) {
+  let message = null;
+  if (result.type === 'calc') {
+    await navigator.clipboard.writeText(result.value);
+    message = `${result.value} copié`;
+  } else if (result.type === 'web') {
+    const error = await window.diva.openEntry({ name: 'Recherche web', open: `https://www.google.com/search?q=${encodeURIComponent(result.query)}` });
+    message = error;
+  } else {
+    const error = await window.diva.openEntry(result);
+    message = error ?? `${result.name} lancé`;
+  }
+  if (message) toast(message);
+  showView('main');
+}
+
+$('#search-input').addEventListener('input', renderSearch);
+$('#search-input').addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    selectResult(selectedResult + (event.key === 'ArrowDown' ? 1 : -1));
+  } else if (event.key === 'Enter' && searchResults.length) {
+    event.preventDefault();
+    activateResult(searchResults[selectedResult]);
+  } else if (event.key === 'Escape' && event.target.value) {
+    // Premier Échap : on vide la recherche ; le second ferme (géré plus bas).
+    event.stopPropagation();
+    event.target.value = '';
+    renderSearch();
+  }
+});
+
 // --- Réglages de la fenêtre ---
 
 function renderWindowSettings(settings) {
@@ -492,16 +669,26 @@ $('#link-form').addEventListener('submit', async (event) => {
 // --- Démarrage ---
 
 $('#hide').addEventListener('click', () => window.diva.hide());
-$('#toggle-settings').addEventListener('click', () => showView(currentView === 'main' ? 'settings' : 'main'));
+$('#toggle-settings').addEventListener('click', () => showView(SETTINGS_VIEWS.includes(currentView) ? 'main' : 'settings'));
+$('#open-search').addEventListener('click', () => showView(currentView === 'search' ? 'main' : 'search'));
 $('#add-app').addEventListener('click', () => showView('picker'));
 $('#add-link').addEventListener('click', () => showView('link'));
 for (const button of document.querySelectorAll('[data-back]')) {
   button.addEventListener('click', () => showView(button.dataset.back || 'main'));
 }
 document.addEventListener('keydown', (event) => {
+  // Sur la vue principale, taper une lettre ouvre la recherche avec cette lettre.
+  const typing = event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey;
+  if (currentView === 'main' && typing && event.key !== ' ' && !(event.target instanceof HTMLInputElement)) {
+    event.preventDefault();
+    showView('search');
+    $('#search-input').value = event.key;
+    renderSearch();
+    return;
+  }
   if (event.key !== 'Escape') return;
   if (currentView === 'picker' || currentView === 'link') showView('settings');
-  else if (currentView === 'settings') showView('main');
+  else if (currentView === 'settings' || currentView === 'search') showView('main');
 });
 
 $('#open-spotify').addEventListener('click', () => window.diva.launchApp('Spotify'));

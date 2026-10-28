@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('diva', {
   getGrid: () => ipcRenderer.invoke('get-grid'),
   getInstalledApps: () => ipcRenderer.invoke('get-installed-apps'),
   launchApp: (name) => ipcRenderer.invoke('launch-app', name),
+  getSearchEntries: () => ipcRenderer.invoke('get-search-entries'),
+  openEntry: (entry) => ipcRenderer.invoke('open-entry', { name: entry.name, open: entry.open }),
   getAppIcon: (entry) => ipcRenderer.invoke('get-app-icon', { open: entry.open, iconFile: entry.iconFile }),
   getWindowSettings: () => ipcRenderer.invoke('get-window-settings'),
   addLink: (link) => ipcRenderer.invoke('add-link', { name: link.name, target: link.target }),
