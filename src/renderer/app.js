@@ -74,33 +74,6 @@ async function fillIcon(entry, slot) {
   }
 }
 
-// --- Setups ---
-
-function renderSetups(setups) {
-  const container = $('#setups');
-  container.replaceChildren();
-  for (const setup of setups) {
-    const button = document.createElement('button');
-    button.className = 'setup';
-    button.title = setup.apps.join(', ');
-    if (setup.icon) {
-      const icon = document.createElement('span');
-      icon.className = 'setup-icon';
-      icon.textContent = setup.icon;
-      button.append(icon);
-    }
-    button.append(setup.name);
-    button.addEventListener('click', async () => {
-      button.classList.add('running');
-      toast(`Lancement de ${setup.name}…`);
-      const errors = await window.diva.runSetup(setup.name);
-      button.classList.remove('running');
-      toast(errors.length ? errors.join('\n') : `${setup.name} est prêt`);
-    });
-    container.append(button);
-  }
-}
-
 // --- Grille d'apps ---
 
 let grid = { title: 'Apps', apps: [], settings: { count: 8, fillWithRecent: true, pinned: [], hidden: [] } };
@@ -323,12 +296,10 @@ new ResizeObserver(() => {
   window.diva.resize(widget.offsetHeight + parseFloat(marginTop) + parseFloat(marginBottom));
 }).observe(widget);
 
-window.diva.onConfig((config) => renderSetups(config.setups ?? []));
 window.diva.onGrid(renderGrid);
 window.diva.onOpenSettings(() => showView('settings'));
 window.diva.onMedia(renderMedia);
 window.diva.onToast(toast);
-window.diva.getConfig().then((config) => renderSetups(config.setups ?? []));
 window.diva.getGrid().then(renderGrid);
 
 updateClock();

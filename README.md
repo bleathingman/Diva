@@ -1,6 +1,6 @@
 # Diva
 
-Widget companion pour Windows : contrôle de la musique, lanceur d'apps et « setups » (plusieurs apps d'un clic).
+Widget companion pour Windows : contrôle de la musique et lanceur d'apps.
 
 ## Lancer
 
@@ -22,18 +22,14 @@ Clic droit sur l'icône → **Modifier la config**. Le fichier (`%APPDATA%\Diva\
   "hotkey": "Ctrl+Alt+D",
   "alwaysOnTop": true,
   "apps": [
-    { "name": "Spotify", "open": "spotify:", "icon": "🎵" },
-    { "name": "Steam", "open": "C:\\Program Files (x86)\\Steam\\steam.exe" }
-  ],
-  "setups": [
-    { "name": "Gaming", "icon": "🎮", "apps": ["Steam", "Spotify"] }
+    { "name": "Spotify", "open": "spotify:", "icon": "🎵" }
   ]
 }
 ```
 
+- `apps` : apps nommées, prioritaires sur celles trouvées automatiquement (le bouton « Ouvrir Spotify » lance celle qui s'appelle `Spotify`).
 - `open` : un `.exe`, un raccourci `.lnk`, n'importe quel fichier, ou un lien (`spotify:`, `https://...`). Les variables comme `%APPDATA%` sont acceptées.
 - `icon` (facultatif) : un emoji. Sans lui, Diva prend la vraie icône de l'app.
-- Un setup liste des **noms** d'apps déclarées dans `apps`.
 
 ### Grille d'apps
 

@@ -3,18 +3,6 @@
   "alwaysOnTop": true,
   "grid": { "count": 8, "fillWithRecent": true, "recentDays": 30, "pinned": [], "hidden": [] },
   "apps": [
-    { "name": "Spotify", "open": "spotify:", "icon": "🎵" },
-    { "name": "Discord", "open": "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Discord Inc\\Discord.lnk" },
-    { "name": "Steam", "open": "C:\\Program Files (x86)\\Steam\\steam.exe" },
-    { "name": "League", "open": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\Riot Games\\League of Legends.lnk" },
-    { "name": "VS Code", "open": "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe" },
-    { "name": "Divo", "open": "%LOCALAPPDATA%\\Programs\\Divo\\Divo.exe" },
-    { "name": "OBS", "open": "%ProgramData%\\Microsoft\\Windows\\Start Menu\\Programs\\OBS Studio.lnk" },
-    { "name": "Pokémon Z", "open": "%USERPROFILE%\\OneDrive\\Bureau\\Pokémon Z V2.12 - Français\\Game.exe" }
-  ],
-  "setups": [
-    { "name": "Gaming", "icon": "🎮", "apps": ["Discord", "Steam", "Spotify"] },
-    { "name": "League", "icon": "⚔️", "apps": ["League", "Discord", "Spotify"] },
-    { "name": "Dev", "icon": "💻", "apps": ["VS Code", "Divo", "Spotify"] }
+    { "name": "Spotify", "open": "spotify:", "icon": "🎵" }
   ]
 }

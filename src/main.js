@@ -70,7 +70,6 @@ function applyConfig() {
   config = loadConfig();
   win?.setAlwaysOnTop(config.alwaysOnTop !== false);
   if (config.hotkey !== previousHotkey) registerHotkey(previousHotkey);
-  win?.webContents.send('config', config);
   sendGrid();
   if (gridSettings().recentDays !== previousDays) refreshRecentApps();
 }
@@ -78,7 +77,6 @@ function applyConfig() {
 function saveConfig() {
   lastSavedConfig = JSON.stringify(config, null, 2);
   fs.writeFileSync(userFile('config.json'), lastSavedConfig);
-  win?.webContents.send('config', config);
   sendGrid();
 }
 
@@ -118,19 +116,6 @@ async function launchApp(name) {
   if (!entry) return `App inconnue : ${name}`;
   const error = await openTarget(entry.open);
   return error ? `${entry.name} : ${error}` : null;
-}
-
-async function runSetup(name) {
-  const setup = config.setups.find((entry) => entry.name === name);
-  if (!setup) return [`Setup inconnu : ${name}`];
-  const errors = [];
-  for (const appName of setup.apps) {
-    const error = await launchApp(appName);
-    if (error) errors.push(error);
-    // Un petit délai évite que toutes les fenêtres se battent pour le focus.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  return errors;
 }
 
 // Pour un raccourci .lnk, Windows renverrait l'icône générique « fichier + flèche » :
@@ -383,11 +368,9 @@ function createTray() {
 
 // --- Communication avec l'interface --------------------------------------------------
 
-ipcMain.handle('get-config', () => config);
 ipcMain.handle('get-grid', () => buildGrid());
 ipcMain.handle('get-installed-apps', () => getInstalledApps());
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
-ipcMain.handle('run-setup', (_event, name) => runSetup(name));
 ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
 ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
 ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
