@@ -287,12 +287,13 @@ let currentView = 'main';
 
 function showView(name) {
   currentView = name;
-  for (const view of ['main', 'settings', 'picker']) {
+  for (const view of ['main', 'settings', 'picker', 'link']) {
     $(`#view-${view}`).hidden = view !== name;
   }
   $('#toggle-settings').classList.toggle('active', name !== 'main');
   if (name === 'settings') renderSettings();
   if (name === 'picker') openPicker();
+  if (name === 'link') openLinkForm();
 }
 
 function actionButton(icon, title, onClick) {
@@ -438,17 +439,68 @@ function renderPicker() {
 
 $('#picker-search').addEventListener('input', renderPicker);
 
+// --- Réglages de la fenêtre ---
+
+function renderWindowSettings(settings) {
+  $('#always-on-top').checked = settings.alwaysOnTop;
+  $('#hide-on-blur').checked = settings.hideOnBlur;
+  $('#snap-to-edges').checked = settings.snapToEdges;
+  setSlider($('#idle-opacity'), settings.idleOpacity);
+  if (!$('#idle-opacity').dataset.dragging) $('#idle-opacity-value').textContent = settings.idleOpacity;
+}
+
+for (const [id, key] of [['#always-on-top', 'alwaysOnTop'], ['#hide-on-blur', 'hideOnBlur'], ['#snap-to-edges', 'snapToEdges']]) {
+  $(id).addEventListener('change', (event) => window.diva.updateWindow({ [key]: event.target.checked }));
+}
+
+// Pendant le glissé, la souris est sur le widget (donc à 100 %) : on montre l'opacité
+// choisie en direct, puis on l'enregistre au lâcher.
+bindSlider($('#idle-opacity'), {
+  onMove: (value) => window.diva.previewOpacity(value),
+  onRelease: (value) => window.diva.updateWindow({ idleOpacity: value }),
+});
+$('#idle-opacity').addEventListener('input', () => {
+  $('#idle-opacity-value').textContent = $('#idle-opacity').value;
+});
+
+// --- Ajout d'un lien ---
+
+function openLinkForm() {
+  $('#link-form').reset();
+  $('#link-error').hidden = true;
+  $('#link-target').focus();
+}
+
+$('#pick-folder').addEventListener('click', async () => {
+  const folder = await window.diva.pickFolder();
+  if (folder) $('#link-target').value = folder;
+});
+
+$('#link-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const link = { target: $('#link-target').value, name: $('#link-name').value };
+  const error = await window.diva.addLink(link);
+  if (error) {
+    $('#link-error').textContent = error;
+    $('#link-error').hidden = false;
+    return;
+  }
+  toast('Lien épinglé');
+  showView('settings');
+});
+
 // --- Démarrage ---
 
 $('#hide').addEventListener('click', () => window.diva.hide());
 $('#toggle-settings').addEventListener('click', () => showView(currentView === 'main' ? 'settings' : 'main'));
 $('#add-app').addEventListener('click', () => showView('picker'));
+$('#add-link').addEventListener('click', () => showView('link'));
 for (const button of document.querySelectorAll('[data-back]')) {
   button.addEventListener('click', () => showView(button.dataset.back || 'main'));
 }
 document.addEventListener('keydown', (event) => {
   if (event.key !== 'Escape') return;
-  if (currentView === 'picker') showView('settings');
+  if (currentView === 'picker' || currentView === 'link') showView('settings');
   else if (currentView === 'settings') showView('main');
 });
 
@@ -472,6 +524,12 @@ window.diva.onAudio(renderAudio);
 setInterval(renderProgress, 250);
 window.diva.onToast(toast);
 window.diva.getGrid().then(renderGrid);
+window.diva.onWindowSettings(renderWindowSettings);
+window.diva.getWindowSettings().then(renderWindowSettings);
+
+// Opacité au repos : le processus principal repasse à 100 % tant que la souris est dessus.
+document.documentElement.addEventListener('mouseenter', () => window.diva.hover(true));
+document.documentElement.addEventListener('mouseleave', () => window.diva.hover(false));
 
 updateClock();
 setInterval(updateClock, 10_000);

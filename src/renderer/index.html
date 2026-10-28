@@ -11,7 +11,7 @@
     <header class="titlebar">
       <span class="brand"><span class="dot"></span>Diva</span>
       <span id="clock" class="clock"></span>
-      <button id="toggle-settings" class="icon-button" title="Réglages des apps">
+      <button id="toggle-settings" class="icon-button" title="Réglages">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
       </button>
       <button id="hide" class="icon-button" title="Masquer (raccourci global)">
@@ -79,16 +79,22 @@
         <button class="icon-button" data-back title="Retour">
           <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
         </button>
-        <span>Réglages des apps</span>
+        <span>Réglages</span>
       </div>
 
       <h2>Épinglées</h2>
       <div id="pinned-list" class="list"></div>
       <p id="pinned-empty" class="empty" hidden>Aucune. La grille montre tes apps les plus lancées.</p>
-      <button id="add-app" class="wide-button">
-        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-        Ajouter une app
-      </button>
+      <div class="button-pair">
+        <button id="add-app" class="wide-button">
+          <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          App
+        </button>
+        <button id="add-link" class="wide-button">
+          <svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>
+          Lien
+        </button>
+      </div>
 
       <h2>Grille</h2>
       <label class="row">
@@ -111,6 +117,50 @@
       <h2>Masquées</h2>
       <div id="hidden-list" class="list"></div>
       <p id="hidden-empty" class="empty" hidden>Aucune. Clic droit sur une app pour la masquer.</p>
+
+      <h2>Fenêtre</h2>
+      <label class="row">
+        <span>Toujours au premier plan</span>
+        <input id="always-on-top" type="checkbox" class="switch">
+      </label>
+      <label class="row">
+        <span>Se cacher quand je clique ailleurs</span>
+        <input id="hide-on-blur" type="checkbox" class="switch">
+      </label>
+      <label class="row">
+        <span>S'aimanter aux bords de l'écran</span>
+        <input id="snap-to-edges" type="checkbox" class="switch">
+      </label>
+      <div class="row">
+        <span>Opacité au repos</span>
+        <div class="opacity-control">
+          <input id="idle-opacity" class="slider" type="range" min="30" max="100" step="5">
+          <span id="idle-opacity-value" class="volume-value">100</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ajout d'un lien : site web ou dossier -->
+    <div id="view-link" class="view" hidden>
+      <div class="view-header">
+        <button class="icon-button" data-back="settings" title="Retour">
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span>Ajouter un lien</span>
+      </div>
+      <form id="link-form" class="form" autocomplete="off">
+        <label class="field">
+          <span>Site ou dossier</span>
+          <input id="link-target" class="search" placeholder="youtube.com ou C:\Users\…" spellcheck="false">
+        </label>
+        <button type="button" id="pick-folder" class="text-button">Choisir un dossier…</button>
+        <label class="field">
+          <span>Nom</span>
+          <input id="link-name" class="search" placeholder="Automatique" spellcheck="false">
+        </label>
+        <p id="link-error" class="form-error" hidden></p>
+        <button type="submit" class="primary-button">Épingler</button>
+      </form>
     </div>
 
     <!-- Choix d'une app installée -->

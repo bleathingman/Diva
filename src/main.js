@@ -1,10 +1,12 @@
-const { app, BrowserWindow, Tray, Menu, globalShortcut, ipcMain, shell, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, net, shell, screen, nativeImage } = require('electron');
 const { spawn, execFile } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
 const WIDTH = 320;
+const SNAP_DISTANCE = 32;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
 const MEDIA_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'media.ps1');
@@ -24,6 +26,9 @@ let installedApps = null; // promesse gardée en cache, la liste change rarement
 let installedList = [];
 let lastSavedConfig = '';
 let quitting = false;
+let hovered = false;
+let blurGuard = false; // vrai pendant un menu ou une boîte de dialogue : la perte de focus est normale
+let hiddenByBlurAt = 0;
 
 // --- Fichiers utilisateur (%APPDATA%\Diva) -------------------------------------------
 
@@ -70,7 +75,7 @@ function applyConfig() {
   const previousHotkey = config?.hotkey;
   const previousDays = gridSettings().recentDays;
   config = loadConfig();
-  win?.setAlwaysOnTop(config.alwaysOnTop !== false);
+  applyWindowSettings();
   if (config.hotkey !== previousHotkey) registerHotkey(previousHotkey);
   sendGrid();
   if (gridSettings().recentDays !== previousDays) refreshRecentApps();
@@ -154,17 +159,34 @@ async function getAppIcon({ open, iconFile } = {}) {
 
 // --- Grille d'apps : épinglées puis récentes --------------------------------------
 
-const GRID_KEYS = ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'];
+const SECTION_KEYS = {
+  grid: ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'],
+  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity'],
+};
 
 function gridSettings() {
   return { count: 8, fillWithRecent: true, recentDays: 30, pinned: [], hidden: [], ...config?.grid };
 }
 
-function updateGrid(patch) {
-  const allowed = Object.fromEntries(Object.entries(patch).filter(([key]) => GRID_KEYS.includes(key)));
-  config = { ...config, grid: { ...gridSettings(), ...allowed } };
-  saveConfig();
+function windowSettings() {
+  // alwaysOnTop était à la racine de la config avant le panneau Réglages : on le reprend.
+  return {
+    alwaysOnTop: config?.alwaysOnTop ?? true, hideOnBlur: false, snapToEdges: true, idleOpacity: 100,
+    ...config?.window,
+  };
 }
+
+function updateSection(section, patch) {
+  const keys = SECTION_KEYS[section];
+  if (!keys) return;
+  const allowed = Object.fromEntries(Object.entries(patch).filter(([key]) => keys.includes(key)));
+  const current = section === 'grid' ? gridSettings() : windowSettings();
+  config = { ...config, [section]: { ...current, ...allowed } };
+  saveConfig();
+  if (section === 'window') applyWindowSettings();
+}
+
+const updateGrid = (patch) => updateSection('grid', patch);
 
 function buildGrid() {
   const settings = gridSettings();
@@ -191,6 +213,7 @@ function withCurrentIcon(entry) {
 
 function sendGrid() {
   win?.webContents.send('grid', buildGrid());
+  win?.webContents.send('window-settings', windowSettings());
 }
 
 // Compare une app (objet ou simple nom) à un nom, avec la même règle que normalize().
@@ -200,6 +223,105 @@ function pinApp({ name, open, iconFile }) {
   const { pinned } = gridSettings();
   if (!name || !open || pinned.some(sameApp(name))) return;
   updateGrid({ pinned: [...pinned, iconFile ? { name, open, iconFile } : { name, open }] });
+}
+
+// --- Liens favoris : un site ou un dossier épinglé comme une app ---
+
+const isPathLike = (value) => /^([a-z]:[\\/]|\\\\|%)/i.test(value);
+
+function defaultLinkName(open) {
+  if (isPathLike(open)) return path.basename(expandEnv(open).replace(/[\\/]+$/, '')) || open;
+  try {
+    return new URL(open).hostname.replace(/^www\./, '') || open;
+  } catch {
+    return open;
+  }
+}
+
+// Renvoie un message d'erreur, ou null si le lien est épinglé.
+function addLink({ name, target } = {}) {
+  // Sans caractères de contrôle ni guillemets (ceux du « Copier en tant que chemin » de Windows).
+  let open = String(target ?? '').replace(/[\u0000-\u001f]/g, '').trim().replace(/^"(.*)"$/, '$1');
+  if (!open) return 'Indique une adresse ou un dossier';
+  if (isPathLike(open)) {
+    if (!fs.existsSync(expandEnv(open))) return 'Dossier ou fichier introuvable';
+  } else {
+    // "youtube.com" tout court : on suppose un site web. Un protocole fait au moins 2 lettres
+    // ("C:" est un lecteur, pas un protocole).
+    if (!/^[a-z][a-z0-9+.-]+:/i.test(open)) open = `https://${open}`;
+    try {
+      new URL(open);
+    } catch {
+      return 'Adresse invalide';
+    }
+  }
+  const label = String(name ?? '').trim() || defaultLinkName(open);
+  if (gridSettings().pinned.some(sameApp(label))) return `« ${label} » est déjà épinglé`;
+  pinApp({ name: label, open });
+  if (/^https?:/i.test(open)) {
+    fetchFavicon(open).then((iconFile) => {
+      if (!iconFile) return;
+      const { pinned } = gridSettings();
+      updateGrid({ pinned: pinned.map((entry) => (sameApp(label)(entry) ? { ...entry, iconFile } : entry)) });
+    });
+  }
+  return null;
+}
+
+// Icône d'un site : d'abord celles déclarées dans la page (apple-touch-icon, la plus nette),
+// puis /favicon.ico. Enregistrée en PNG dans %APPDATA%\Diva\icons.
+async function fetchFavicon(pageUrl) {
+  const { origin } = new URL(pageUrl);
+  const candidates = [];
+  try {
+    const html = await (await net.fetch(pageUrl)).text();
+    for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
+      const rel = /\brel=["']?([^"'>]+)/i.exec(tag)?.[1].toLowerCase() ?? '';
+      const href = /\bhref=["']?([^"'\s>]+)/i.exec(tag)?.[1];
+      if (!href || !rel.includes('icon') || /\.svg(\?|$)/i.test(href)) continue;
+      candidates.push({ url: new URL(href, pageUrl).href, rank: rel.includes('apple-touch') ? 0 : 1 });
+    }
+  } catch {
+    // Page inaccessible : on tente quand même /favicon.ico.
+  }
+  candidates.sort((a, b) => a.rank - b.rank);
+  candidates.push({ url: `${origin}/favicon.ico` });
+
+  const folder = userFile('icons');
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, `${crypto.createHash('md5').update(origin).digest('hex').slice(0, 12)}.png`);
+  for (const { url } of candidates) {
+    try {
+      const response = await net.fetch(url);
+      if (!response.ok) continue;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      let image = nativeImage.createFromBuffer(buffer);
+      if (image.isEmpty()) {
+        // Les .ico ne se lisent que depuis un fichier.
+        const ico = `${file}.ico`;
+        fs.writeFileSync(ico, buffer);
+        image = nativeImage.createFromPath(ico);
+        fs.rmSync(ico, { force: true });
+      }
+      if (image.isEmpty()) continue;
+      if (image.getSize().width > 64) image = image.resize({ width: 64, height: 64, quality: 'best' });
+      fs.writeFileSync(file, image.toPNG());
+      return file;
+    } catch {
+      // Candidat suivant.
+    }
+  }
+  return null;
+}
+
+async function pickFolder() {
+  blurGuard = true;
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
+    return canceled ? null : filePaths[0];
+  } finally {
+    blurGuard = false;
+  }
 }
 
 function unpinApp(name) {
@@ -212,6 +334,7 @@ function hideApp(name) {
 }
 
 function showAppMenu(name) {
+  blurGuard = true;
   const pinned = gridSettings().pinned.some(sameApp(name));
   // Pour épingler une récente, on garde son icône de package si elle en a une.
   const entry = recentApps.find(sameApp(name)) ?? findApp(name);
@@ -221,8 +344,8 @@ function showAppMenu(name) {
       : { label: 'Épingler', click: () => entry && pinApp(entry) },
     { label: 'Masquer de la grille', visible: !pinned, click: () => hideApp(name) },
     { type: 'separator' },
-    { label: 'Réglages des apps…', click: () => win.webContents.send('open-settings') },
-  ]).popup({ window: win });
+    { label: 'Réglages…', click: () => win.webContents.send('open-settings') },
+  ]).popup({ window: win, callback: () => { blurGuard = false; } });
 }
 
 function runAppScript(script, args = []) {
@@ -313,7 +436,7 @@ function createWindow() {
     transparent: true,
     resizable: false,
     skipTaskbar: true,
-    alwaysOnTop: config.alwaysOnTop !== false,
+    alwaysOnTop: windowSettings().alwaysOnTop,
     show: false,
     icon: ICON_PATH,
     webPreferences: {
@@ -324,12 +447,59 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.once('ready-to-show', () => win.show());
+  win.once('ready-to-show', () => {
+    applyWindowSettings();
+    win.show();
+  });
 
   win.on('moved', () => {
+    if (windowSettings().snapToEdges) snapToEdges();
     const [newX, newY] = win.getPosition();
     fs.writeFileSync(userFile('state.json'), JSON.stringify({ x: newX, y: newY }));
   });
+
+  win.on('blur', () => {
+    if (blurGuard || !windowSettings().hideOnBlur) return;
+    win.hide();
+    hiddenByBlurAt = Date.now();
+  });
+}
+
+function applyWindowSettings() {
+  if (!win) return;
+  const settings = windowSettings();
+  win.setAlwaysOnTop(settings.alwaysOnTop);
+  // Opacité réglée au repos, pleine quand la souris est dessus.
+  const opacity = Math.min(100, Math.max(30, Number(settings.idleOpacity) || 100));
+  win.setOpacity(hovered ? 1 : opacity / 100);
+  win.webContents.send('window-settings', settings);
+}
+
+// Lâché à moins de SNAP_DISTANCE d'un bord de l'écran : le widget s'y colle.
+// (La marge transparente autour du widget laisse un petit espace avec le bord.)
+function snapToEdges() {
+  const bounds = win.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  let { x, y } = bounds;
+  const right = area.x + area.width - bounds.width;
+  const bottom = area.y + area.height - bounds.height;
+  if (Math.abs(x - area.x) < SNAP_DISTANCE) x = area.x;
+  else if (Math.abs(x - right) < SNAP_DISTANCE) x = right;
+  if (Math.abs(y - area.y) < SNAP_DISTANCE) y = area.y;
+  else if (Math.abs(y - bottom) < SNAP_DISTANCE) y = bottom;
+  if (x !== bounds.x || y !== bounds.y) win.setPosition(x, y);
+}
+
+// Change la hauteur sans sortir de l'écran ; collé en bas, le widget grandit vers le haut.
+function resizeWindow(height) {
+  const bounds = win.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  const newHeight = Math.min(Math.ceil(height), area.height);
+  const areaBottom = area.y + area.height;
+  const stuckToBottom = Math.abs(bounds.y + bounds.height - areaBottom) <= 1;
+  let y = stuckToBottom ? areaBottom - newHeight : bounds.y;
+  y = Math.max(area.y, Math.min(y, areaBottom - newHeight));
+  win.setBounds({ x: bounds.x, y, width: WIDTH, height: newHeight });
 }
 
 function toggleWindow() {
@@ -353,7 +523,12 @@ function registerHotkey(previous) {
 function createTray() {
   tray = new Tray(nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }));
   tray.setToolTip('Diva');
-  tray.on('click', toggleWindow);
+  tray.on('click', () => {
+    // Avec « se cacher quand je clique ailleurs », ce clic vient de cacher le widget :
+    // le réafficher aussitôt annulerait le geste.
+    if (Date.now() - hiddenByBlurAt < 400) return;
+    toggleWindow();
+  });
   const refreshMenu = () => tray.setContextMenu(Menu.buildFromTemplate([
     { label: 'Afficher / masquer', click: toggleWindow },
     { label: 'Modifier la config', click: () => shell.openPath(userFile('config.json')) },
@@ -375,16 +550,27 @@ function createTray() {
 // --- Communication avec l'interface --------------------------------------------------
 
 ipcMain.handle('get-grid', () => buildGrid());
+ipcMain.handle('get-window-settings', () => windowSettings());
+ipcMain.handle('add-link', (_event, link) => addLink(link));
+ipcMain.handle('pick-folder', () => pickFolder());
 ipcMain.handle('get-installed-apps', () => getInstalledApps());
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
 ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
 ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
+ipcMain.on('update-window', (_event, patch) => updateSection('window', patch));
+ipcMain.on('preview-opacity', (_event, value) => {
+  win.setOpacity(Math.min(100, Math.max(30, Number(value) || 100)) / 100);
+});
+ipcMain.on('hover', (_event, isHovered) => {
+  hovered = Boolean(isHovered);
+  applyWindowSettings();
+});
 ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
 ipcMain.on('app-menu', (_event, name) => showAppMenu(name));
 ipcMain.on('media-command', (_event, command) => mediaHelper?.send(command));
 ipcMain.on('audio-command', (_event, command) => audioHelper?.send(command));
 ipcMain.on('hide', () => win.hide());
-ipcMain.on('resize', (_event, height) => win.setContentSize(WIDTH, Math.ceil(height)));
+ipcMain.on('resize', (_event, height) => resizeWindow(height));
 
 // --- Démarrage -----------------------------------------------------------------------
 

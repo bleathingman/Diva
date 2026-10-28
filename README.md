@@ -4,7 +4,8 @@ Widget companion pour Windows : contrôle de la musique, volume et lanceur d'app
 
 - **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau).
 - **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son.
-- **Apps** : apps épinglées et les plus lancées (voir plus bas).
+- **Apps et liens** : apps épinglées, sites et dossiers favoris, et les apps les plus lancées (voir plus bas).
+- **Fenêtre** : toujours au premier plan, se cacher quand on clique ailleurs, aimantation aux bords de l'écran, opacité au repos (pleine au survol).
 
 ## Lancer
 
@@ -24,7 +25,7 @@ Clic droit sur l'icône → **Modifier la config**. Le fichier (`%APPDATA%\Diva\
 ```json
 {
   "hotkey": "Ctrl+Alt+D",
-  "alwaysOnTop": true,
+  "window": { "alwaysOnTop": true, "hideOnBlur": false, "snapToEdges": true, "idleOpacity": 100 },
   "apps": [
     { "name": "Spotify", "open": "spotify:", "icon": "🎵" }
   ]
@@ -41,8 +42,9 @@ La grille affiche d'abord tes apps **épinglées**, puis la complète avec les a
 
 Tout se règle dans le widget :
 
-- **Engrenage** → Réglages des apps : réordonner ou retirer les épinglées, réafficher les masquées, nombre d'apps (4 à 16), compléter ou non avec les récentes.
-- **+ Ajouter une app** : recherche parmi toutes les apps installées (menu Démarrer, Store, jeux Steam).
+- **Engrenage** → Réglages : réordonner ou retirer les épinglées, réafficher les masquées, nombre d'apps (4 à 16), compléter ou non avec les récentes, options de la fenêtre.
+- **+ App** : recherche parmi toutes les apps installées (menu Démarrer, Store, jeux Steam).
+- **+ Lien** : un site (`youtube.com`) ou un dossier, épinglé comme une app. L'icône du site est récupérée automatiquement (dans `%APPDATA%\Diva\icons`).
 - **Clic droit sur une app** de la grille : épingler, désépingler, masquer.
 
 Ces réglages sont enregistrés dans la config :
