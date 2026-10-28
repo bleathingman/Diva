@@ -7,12 +7,25 @@ Widget companion pour Windows : contrôle de la musique, volume et lanceur d'app
 - **Apps et liens** : apps épinglées, sites et dossiers favoris, et les apps les plus lancées (voir plus bas).
 - **Fenêtre** : toujours au premier plan, se cacher quand on clique ailleurs, aimantation aux bords de l'écran, opacité au repos (pleine au survol).
 
-## Lancer
+## Installer
+
+```powershell
+npm install
+npm run dist
+```
+
+Puis lancer `dist\Diva-Setup-<version>.exe` : Diva s'installe pour l'utilisateur (sans droits admin) dans `%LOCALAPPDATA%\Programs\Diva`, avec un raccourci dans le menu Démarrer. Pour une mise à jour, augmenter `version` dans `package.json`, refaire `npm run dist` et relancer l'installeur.
+
+L'exe n'est pas signé : au premier lancement, Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » → **Informations complémentaires** → **Exécuter quand même**.
+
+## Développer
 
 ```powershell
 npm install
 npm start
 ```
+
+La version installée et `npm start` partagent la même config (`%APPDATA%\Diva`) et ne peuvent pas tourner en même temps.
 
 - `Ctrl+Alt+D` : afficher / masquer le widget (modifiable dans la config)
 - Glisser la barre du haut pour le déplacer : la position est retenue

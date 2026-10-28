@@ -2,3 +2,4 @@ node_modules/
 
 # Réglages locaux de Claude Code
 .claude/settings.local.json
+dist/

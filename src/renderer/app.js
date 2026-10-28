@@ -509,13 +509,10 @@ for (const button of document.querySelectorAll('[data-media]')) {
   button.addEventListener('click', () => window.diva.media(button.dataset.media));
 }
 
-// La fenêtre prend exactement la hauteur du widget (+ la marge autour). On mesure le widget
-// et pas la page : la page ne descend jamais sous la taille de la fenêtre, qui ne rétrécirait plus.
+// La fenêtre prend exactement la hauteur du widget. On mesure le widget et pas la page :
+// la page ne descend jamais sous la taille de la fenêtre, qui ne rétrécirait plus.
 const widget = $('#widget');
-new ResizeObserver(() => {
-  const { marginTop, marginBottom } = getComputedStyle(widget);
-  window.diva.resize(widget.offsetHeight + parseFloat(marginTop) + parseFloat(marginBottom));
-}).observe(widget);
+new ResizeObserver(() => window.diva.resize(widget.offsetHeight)).observe(widget);
 
 window.diva.onGrid(renderGrid);
 window.diva.onOpenSettings(() => showView('settings'));

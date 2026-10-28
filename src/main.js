@@ -5,14 +5,18 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const WIDTH = 320;
+const WIDTH = 300;
 const SNAP_DISTANCE = 32;
+const SNAP_GAP = 8;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
-const MEDIA_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'media.ps1');
-const AUDIO_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'audio.ps1');
-const RECENT_APPS_PATH = path.join(__dirname, '..', 'helpers', 'recent-apps.ps1');
-const INSTALLED_APPS_PATH = path.join(__dirname, '..', 'helpers', 'installed-apps.ps1');
+// Dans l'app installée, le code est dans l'archive app.asar que PowerShell ne sait pas lire :
+// les scripts sont copiés à côté, dans app.asar.unpacked (voir "asarUnpack" dans package.json).
+const HELPERS_DIR = path.join(__dirname, '..', 'helpers').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
+const MEDIA_HELPER_PATH = path.join(HELPERS_DIR, 'media.ps1');
+const AUDIO_HELPER_PATH = path.join(HELPERS_DIR, 'audio.ps1');
+const RECENT_APPS_PATH = path.join(HELPERS_DIR, 'recent-apps.ps1');
+const INSTALLED_APPS_PATH = path.join(HELPERS_DIR, 'installed-apps.ps1');
 const RECENT_REFRESH_MS = 10 * 60 * 1000;
 
 let win = null;
@@ -418,7 +422,7 @@ function startHelper(script, channel) {
 
 function defaultPosition() {
   const { workArea } = screen.getPrimaryDisplay();
-  return { x: workArea.x + workArea.width - WIDTH - 24, y: workArea.y + 24 };
+  return { x: workArea.x + workArea.width - WIDTH - SNAP_GAP, y: workArea.y + SNAP_GAP };
 }
 
 function createWindow() {
@@ -475,17 +479,18 @@ function applyWindowSettings() {
   win.webContents.send('window-settings', settings);
 }
 
-// Lâché à moins de SNAP_DISTANCE d'un bord de l'écran : le widget s'y colle.
-// (La marge transparente autour du widget laisse un petit espace avec le bord.)
+// Lâché à moins de SNAP_DISTANCE d'un bord de l'écran : le widget s'y colle, à SNAP_GAP du bord.
 function snapToEdges() {
   const bounds = win.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
   let { x, y } = bounds;
-  const right = area.x + area.width - bounds.width;
-  const bottom = area.y + area.height - bounds.height;
-  if (Math.abs(x - area.x) < SNAP_DISTANCE) x = area.x;
+  const left = area.x + SNAP_GAP;
+  const top = area.y + SNAP_GAP;
+  const right = area.x + area.width - bounds.width - SNAP_GAP;
+  const bottom = area.y + area.height - bounds.height - SNAP_GAP;
+  if (Math.abs(x - left) < SNAP_DISTANCE) x = left;
   else if (Math.abs(x - right) < SNAP_DISTANCE) x = right;
-  if (Math.abs(y - area.y) < SNAP_DISTANCE) y = area.y;
+  if (Math.abs(y - top) < SNAP_DISTANCE) y = top;
   else if (Math.abs(y - bottom) < SNAP_DISTANCE) y = bottom;
   if (x !== bounds.x || y !== bounds.y) win.setPosition(x, y);
 }
@@ -496,8 +501,8 @@ function resizeWindow(height) {
   const area = screen.getDisplayMatching(bounds).workArea;
   const newHeight = Math.min(Math.ceil(height), area.height);
   const areaBottom = area.y + area.height;
-  const stuckToBottom = Math.abs(bounds.y + bounds.height - areaBottom) <= 1;
-  let y = stuckToBottom ? areaBottom - newHeight : bounds.y;
+  const stuckToBottom = Math.abs(bounds.y + bounds.height - (areaBottom - SNAP_GAP)) <= 1;
+  let y = stuckToBottom ? areaBottom - SNAP_GAP - newHeight : bounds.y;
   y = Math.max(area.y, Math.min(y, areaBottom - newHeight));
   win.setBounds({ x: bounds.x, y, width: WIDTH, height: newHeight });
 }
@@ -520,6 +525,10 @@ function registerHotkey(previous) {
   }
 }
 
+// Installée, Diva.exe se lance seule. Avec npm start, Windows doit lancer electron.exe
+// avec le dossier du projet, sinon il ouvrirait l'écran d'accueil d'Electron.
+const LOGIN_ITEM = app.isPackaged ? {} : { path: process.execPath, args: [app.getAppPath()] };
+
 function createTray() {
   tray = new Tray(nativeImage.createFromPath(ICON_PATH).resize({ width: 16, height: 16 }));
   tray.setToolTip('Diva');
@@ -535,9 +544,9 @@ function createTray() {
     {
       label: 'Lancer au démarrage de Windows',
       type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
+      checked: app.getLoginItemSettings(LOGIN_ITEM).openAtLogin,
       click: (item) => {
-        app.setLoginItemSettings({ openAtLogin: item.checked });
+        app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: item.checked });
         refreshMenu();
       },
     },

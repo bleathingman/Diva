@@ -2,13 +2,47 @@
   "name": "diva",
   "productName": "Diva",
   "version": "0.1.0",
-  "description": "Widget companion pour le PC : musique, lanceur d'apps.",
+  "description": "Widget companion pour le PC : musique, volume, lanceur d'apps.",
+  "author": "bleathingman",
   "main": "src/main.js",
   "private": true,
   "scripts": {
-    "start": "set ELECTRON_RUN_AS_NODE=&& electron ."
+    "start": "set ELECTRON_RUN_AS_NODE=&& electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.bleathingman.diva",
+    "productName": "Diva",
+    "files": [
+      "src/**",
+      "assets/**",
+      "helpers/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "helpers/**"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "icon": "assets/icon.png"
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "runAfterFinish": true,
+      "shortcutName": "Diva",
+      "artifactName": "Diva-Setup-${version}.exe"
+    }
   },
   "devDependencies": {
-    "electron": "^45.1.0"
+    "electron": "^45.1.0",
+    "electron-builder": "^26.18.0"
   }
 }
