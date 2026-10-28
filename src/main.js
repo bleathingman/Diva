@@ -8,6 +8,7 @@ const WIDTH = 320;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
 const MEDIA_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'media.ps1');
+const AUDIO_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'audio.ps1');
 const RECENT_APPS_PATH = path.join(__dirname, '..', 'helpers', 'recent-apps.ps1');
 const INSTALLED_APPS_PATH = path.join(__dirname, '..', 'helpers', 'installed-apps.ps1');
 const RECENT_REFRESH_MS = 10 * 60 * 1000;
@@ -16,6 +17,7 @@ let win = null;
 let tray = null;
 let config = null;
 let mediaHelper = null;
+let audioHelper = null;
 let recentApps = [];
 let recentRefreshedAt = 0;
 let installedApps = null; // promesse gardée en cache, la liste change rarement
@@ -259,30 +261,34 @@ function getInstalledApps() {
   return installedApps;
 }
 
-// --- Contrôle média (helpers/media.ps1) ----------------------------------------------
+// --- Modules permanents : média (helpers/media.ps1) et volume (helpers/audio.ps1) ----
 
-function startMediaHelper() {
-  mediaHelper = spawn('powershell.exe', [
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', MEDIA_HELPER_PATH,
-  ], { windowsHide: true });
-
-  readline.createInterface({ input: mediaHelper.stdout }).on('line', (line) => {
-    try {
-      win?.webContents.send('media', JSON.parse(line));
-    } catch {
-      // Ligne parasite (avertissement PowerShell...) : on l'ignore.
-    }
-  });
-  mediaHelper.stderr.on('data', (data) => console.error('[media]', data.toString()));
-
-  mediaHelper.on('exit', () => {
-    mediaHelper = null;
-    if (!quitting) setTimeout(startMediaHelper, 2000);
-  });
-}
-
-function sendMediaCommand(command) {
-  mediaHelper?.stdin.write(`${command}\n`);
+// Lance un script PowerShell qui tourne en continu : chaque ligne JSON qu'il écrit part vers
+// l'interface sur `channel`, et send() lui transmet une commande. Relancé s'il s'arrête.
+function startHelper(script, channel) {
+  const helper = {
+    process: null,
+    send: (command) => helper.process?.stdin.write(`${String(command).replace(/[\r\n]/g, ' ')}\n`),
+  };
+  const start = () => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
+      { windowsHide: true });
+    helper.process = child;
+    readline.createInterface({ input: child.stdout }).on('line', (line) => {
+      try {
+        win?.webContents.send(channel, JSON.parse(line));
+      } catch {
+        // Ligne parasite (avertissement PowerShell...) : on l'ignore.
+      }
+    });
+    child.stderr.on('data', (data) => console.error(`[${channel}]`, data.toString()));
+    child.on('exit', () => {
+      helper.process = null;
+      if (!quitting) setTimeout(start, 2000);
+    });
+  };
+  start();
+  return helper;
 }
 
 // --- Fenêtre, barre des tâches, raccourci --------------------------------------------
@@ -375,7 +381,8 @@ ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
 ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
 ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
 ipcMain.on('app-menu', (_event, name) => showAppMenu(name));
-ipcMain.on('media-command', (_event, command) => sendMediaCommand(command));
+ipcMain.on('media-command', (_event, command) => mediaHelper?.send(command));
+ipcMain.on('audio-command', (_event, command) => audioHelper?.send(command));
 ipcMain.on('hide', () => win.hide());
 ipcMain.on('resize', (_event, height) => win.setContentSize(WIDTH, Math.ceil(height)));
 
@@ -395,7 +402,8 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
     registerHotkey();
     watchConfig();
-    startMediaHelper();
+    mediaHelper = startHelper(MEDIA_HELPER_PATH, 'media');
+    audioHelper = startHelper(AUDIO_HELPER_PATH, 'audio');
     refreshRecentApps();
     setInterval(() => {
       installedApps = null;
@@ -405,7 +413,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true;
-    mediaHelper?.stdin.end();
+    mediaHelper?.process?.stdin.end();
+    audioHelper?.process?.stdin.end();
   });
   app.on('will-quit', () => globalShortcut.unregisterAll());
   // Le widget vit dans la barre des tâches : on ne quitte pas quand la fenêtre est cachée.

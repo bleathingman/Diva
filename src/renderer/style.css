@@ -250,6 +250,198 @@ button {
   display: block;
 }
 
+/* --- Curseurs : piste fine, partie remplie en gris clair, poignée au survol --- */
+
+.slider {
+  --fill: 0%;
+  --track-fill: #b4b4ba;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.slider:hover,
+.slider[data-dragging] {
+  --track-fill: var(--white);
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(to right, var(--track-fill) var(--fill), var(--surface-active) var(--fill));
+  transition: background 0.2s var(--ease);
+}
+
+.slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--white);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transform: scale(0);
+  transition: transform 0.15s var(--ease);
+}
+
+.slider:hover::-webkit-slider-thumb,
+.slider[data-dragging]::-webkit-slider-thumb {
+  transform: scale(1);
+}
+
+.slider:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.slider:disabled::-webkit-slider-thumb {
+  transform: scale(0);
+}
+
+/* --- Progression du morceau --- */
+
+.progress {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 34px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: -4px;
+}
+
+.time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.time:last-child {
+  text-align: right;
+}
+
+/* --- Volume --- */
+
+.audio {
+  margin-top: 10px;
+  padding: 4px 6px 4px 4px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.volume-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 26px 28px;
+  align-items: center;
+  gap: 6px;
+}
+
+.volume-value {
+  font-size: 11px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.icon-muted,
+.audio.muted .icon-volume {
+  display: none;
+}
+
+.audio.muted .icon-muted {
+  display: block;
+}
+
+.audio.muted #master {
+  opacity: 0.4;
+}
+
+#toggle-mixer svg {
+  transition: transform 0.25s var(--ease);
+}
+
+#toggle-mixer.open svg {
+  transform: rotate(180deg);
+}
+
+.mixer {
+  margin: 4px 0 2px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.mixer-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 26px 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  transition: opacity 0.2s var(--ease);
+}
+
+/* Les apps sans son en ce moment restent réglables, mais en retrait. */
+.mixer-row.inactive {
+  opacity: 0.55;
+}
+
+.mixer-row.muted .mixer-body {
+  opacity: 0.4;
+}
+
+.mixer-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  filter: grayscale(1);
+  transition: filter 0.25s var(--ease), background 0.2s var(--ease);
+}
+
+.mixer-icon:hover {
+  filter: none;
+  background: var(--surface-hover);
+}
+
+.mixer-row.muted .mixer-icon {
+  opacity: 0.4;
+}
+
+.mixer-icon img {
+  width: 18px;
+  height: 18px;
+}
+
+.mixer-icon .letter {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--surface-active);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* Mêmes colonnes que la ligne du volume général : les pistes et les valeurs s'alignent. */
+.mixer-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mixer-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
 /* --- Apps --- */
 
 h2 {

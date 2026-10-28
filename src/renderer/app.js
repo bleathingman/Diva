@@ -31,20 +31,189 @@ function updateClock() {
   $('#clock').textContent = new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
+// --- Curseurs (progression, volumes) ---
+
+// La partie remplie de la piste suit la valeur : le CSS lit --fill.
+function paintSlider(slider) {
+  const range = Number(slider.max) - Number(slider.min) || 1;
+  slider.style.setProperty('--fill', `${((Number(slider.value) - Number(slider.min)) / range) * 100}%`);
+}
+
+// Met à jour un curseur depuis Windows, sauf si l'utilisateur est en train de le tirer.
+function setSlider(slider, value) {
+  if (slider.dataset.dragging) return;
+  slider.value = value;
+  paintSlider(slider);
+}
+
+// onMove pendant le glissé (limité à ~15 envois/s), onRelease une fois lâché.
+function bindSlider(slider, { onMove, onRelease = onMove }) {
+  let lastSent = 0;
+  let releaseTimer = null;
+  // Après le lâcher, Windows peut encore renvoyer l'ancienne valeur une fois ou deux :
+  // on ignore ses mises à jour un court instant pour que le curseur ne saute pas en arrière.
+  const release = () => {
+    clearTimeout(releaseTimer);
+    releaseTimer = setTimeout(() => delete slider.dataset.dragging, 700);
+  };
+  slider.addEventListener('pointerdown', () => {
+    clearTimeout(releaseTimer);
+    slider.dataset.dragging = '1';
+  });
+  slider.addEventListener('pointerup', release);
+  slider.addEventListener('input', () => {
+    paintSlider(slider);
+    if (onMove && Date.now() - lastSent > 66) {
+      lastSent = Date.now();
+      onMove(Number(slider.value));
+    }
+  });
+  slider.addEventListener('change', () => {
+    release();
+    onRelease(Number(slider.value));
+  });
+}
+
 // --- Musique ---
 
-function renderMedia(state) {
-  const media = $('#media');
-  media.classList.toggle('idle', !state.active);
-  media.classList.toggle('playing', Boolean(state.playing));
+let media = { active: false };
 
-  $('#title').textContent = state.active ? state.title || 'Titre inconnu' : 'Rien en lecture';
-  $('#artist').textContent = state.active ? state.artist || '' : 'Lance ta musique';
+function renderMedia(message) {
+  if (message.type === 'thumbnail') {
+    $('#cover').src = message.data ?? '';
+    $('#media-backdrop').style.backgroundImage = message.data ? `url("${message.data}")` : 'none';
+    return;
+  }
+  media = message;
+  const card = $('#media');
+  card.classList.toggle('idle', !media.active);
+  card.classList.toggle('playing', Boolean(media.playing));
 
-  const thumbnail = state.active && state.thumbnail ? state.thumbnail : '';
-  $('#cover').src = thumbnail;
-  $('#media-backdrop').style.backgroundImage = thumbnail ? `url("${thumbnail}")` : 'none';
+  $('#title').textContent = media.active ? media.title || 'Titre inconnu' : 'Rien en lecture';
+  $('#artist').textContent = media.active ? media.artist || '' : 'Lance ta musique';
+  renderProgress();
 }
+
+const formatTime = (ms) => {
+  const seconds = Math.floor(ms / 1000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+};
+
+// Windows ne donne la position qu'au moment où l'app l'a mise à jour : on avance l'aiguille
+// nous-mêmes depuis ce moment-là tant que la musique joue.
+function currentPosition() {
+  const elapsed = media.playing ? Date.now() - media.updatedAt : 0;
+  return Math.max(0, Math.min(media.durationMs, media.positionMs + elapsed));
+}
+
+function renderProgress() {
+  const hasTimeline = media.active && media.durationMs > 0;
+  $('#progress').hidden = !hasTimeline;
+  if (!hasTimeline) return;
+
+  const seek = $('#seek');
+  seek.max = media.durationMs;
+  seek.disabled = !media.canSeek;
+  setSlider(seek, currentPosition());
+  $('#position').textContent = formatTime(Number(seek.value));
+  $('#duration').textContent = formatTime(media.durationMs);
+}
+
+bindSlider($('#seek'), {
+  onMove: null,
+  onRelease: (position) => {
+    window.diva.media(`seek ${Math.round(position)}`);
+    // Sans attendre la réponse de l'app : l'aiguille reste où on l'a lâchée.
+    media = { ...media, positionMs: position, updatedAt: Date.now() };
+    renderProgress();
+  },
+});
+$('#seek').addEventListener('input', () => {
+  $('#position').textContent = formatTime(Number($('#seek').value));
+});
+
+// --- Volume ---
+
+let audio = { master: 0, muted: false, apps: [] };
+const mixerRows = new Map(); // id du processus -> éléments de sa ligne
+
+function renderAudio(state) {
+  audio = state;
+  $('#audio').classList.toggle('muted', audio.muted);
+  setSlider($('#master'), audio.master);
+  $('#master-value').textContent = audio.master;
+  renderMixer();
+}
+
+function mixerRow(app) {
+  const row = document.createElement('div');
+  row.className = 'mixer-row';
+
+  const icon = document.createElement('button');
+  icon.className = 'mixer-icon';
+  icon.title = 'Couper / remettre le son';
+  icon.addEventListener('click', () => {
+    const current = audio.apps.find((entry) => entry.id === app.id);
+    window.diva.audio(`appmute ${current?.muted ? 0 : 1} ${app.id}`);
+  });
+  fillIcon({ name: app.name, open: app.path }, icon);
+
+  const body = document.createElement('div');
+  body.className = 'mixer-body';
+  const name = document.createElement('span');
+  name.className = 'mixer-name';
+  name.textContent = app.name;
+  const slider = document.createElement('input');
+  slider.type = 'range';
+  slider.className = 'slider';
+  slider.min = 0;
+  slider.max = 100;
+  bindSlider(slider, { onMove: (volume) => window.diva.audio(`app ${volume} ${app.id}`) });
+  body.append(name, slider);
+
+  const value = document.createElement('span');
+  value.className = 'volume-value';
+  slider.addEventListener('input', () => { value.textContent = slider.value; });
+
+  row.append(icon, body, value);
+  return { row, slider, value };
+}
+
+function renderMixer() {
+  if ($('#mixer').hidden) return;
+  const list = $('#mixer-list');
+  const ids = audio.apps.map((app) => app.id).join('|');
+
+  // On ne reconstruit les lignes que si la liste d'apps change, pour ne pas casser un glissé.
+  if (ids !== list.dataset.ids) {
+    list.dataset.ids = ids;
+    mixerRows.clear();
+    list.replaceChildren();
+    for (const app of audio.apps) {
+      const parts = mixerRow(app);
+      mixerRows.set(app.id, parts);
+      list.append(parts.row);
+    }
+  }
+  for (const app of audio.apps) {
+    const { row, slider, value } = mixerRows.get(app.id);
+    row.classList.toggle('muted', app.muted);
+    row.classList.toggle('inactive', !app.active);
+    setSlider(slider, app.volume);
+    if (!slider.dataset.dragging) value.textContent = app.volume;
+  }
+  $('#mixer-empty').hidden = audio.apps.length > 0;
+}
+
+bindSlider($('#master'), { onMove: (volume) => window.diva.audio(`master ${volume}`) });
+$('#master').addEventListener('input', () => { $('#master-value').textContent = $('#master').value; });
+$('#mute').addEventListener('click', () => window.diva.audio(`mute ${audio.muted ? 0 : 1}`));
+$('#toggle-mixer').addEventListener('click', () => {
+  const mixer = $('#mixer');
+  mixer.hidden = !mixer.hidden;
+  $('#toggle-mixer').classList.toggle('open', !mixer.hidden);
+  renderMixer();
+});
 
 // --- Icônes d'apps (en cache : la grille est souvent redessinée) ---
 
@@ -299,6 +468,8 @@ new ResizeObserver(() => {
 window.diva.onGrid(renderGrid);
 window.diva.onOpenSettings(() => showView('settings'));
 window.diva.onMedia(renderMedia);
+window.diva.onAudio(renderAudio);
+setInterval(renderProgress, 250);
 window.diva.onToast(toast);
 window.diva.getGrid().then(renderGrid);
 

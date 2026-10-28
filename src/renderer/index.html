@@ -28,6 +28,11 @@
           <div id="title" class="title">Rien en lecture</div>
           <div id="artist" class="artist">Lance ta musique</div>
         </div>
+        <div id="progress" class="progress" hidden>
+          <span id="position" class="time">0:00</span>
+          <input id="seek" class="slider" type="range" min="0" max="1000" value="0" step="1">
+          <span id="duration" class="time">0:00</span>
+        </div>
         <div class="controls">
           <button data-media="prev" class="icon-button" title="Précédent">
             <svg viewBox="0 0 24 24"><path d="M6 5v14M18 5l-9 7 9 7z"/></svg>
@@ -41,6 +46,24 @@
           </button>
         </div>
         <button id="open-spotify" class="spotify-button">Ouvrir Spotify</button>
+      </section>
+
+      <section id="audio" class="audio">
+        <div class="volume-row">
+          <button id="mute" class="icon-button" title="Couper / remettre le son">
+            <svg class="icon-volume" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+            <svg class="icon-muted" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M22 9l-6 6M16 9l6 6"/></svg>
+          </button>
+          <input id="master" class="slider" type="range" min="0" max="100" value="0" step="1">
+          <span id="master-value" class="volume-value">–</span>
+          <button id="toggle-mixer" class="icon-button" title="Volume par app">
+            <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+        <div id="mixer" class="mixer" hidden>
+          <div id="mixer-list"></div>
+          <p id="mixer-empty" class="empty" hidden>Aucune app ne joue de son.</p>
+        </div>
       </section>
 
       <section>

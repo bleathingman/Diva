@@ -1,6 +1,10 @@
 # Diva
 
-Widget companion pour Windows : contrôle de la musique et lanceur d'apps.
+Widget companion pour Windows : contrôle de la musique, volume et lanceur d'apps.
+
+- **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau).
+- **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son.
+- **Apps** : apps épinglées et les plus lancées (voir plus bas).
 
 ## Lancer
 
@@ -66,7 +70,8 @@ src/
 ├── default-config.json
 └── renderer/          # l'interface du widget (HTML/CSS/JS)
 helpers/
-├── media.ps1          # pont avec le contrôle média de Windows (titre, pochette, lecture)
+├── media.ps1          # pont avec le contrôle média de Windows (titre, pochette, lecture, position)
+├── audio.ps1          # pont avec le mélangeur de volume de Windows (Core Audio)
 ├── recent-apps.ps1    # apps les plus lancées, d'après l'historique UserAssist de Windows
 ├── installed-apps.ps1 # toutes les apps installées (pour « Ajouter une app »)
 └── common.ps1         # fonctions partagées par les deux scripts d'apps

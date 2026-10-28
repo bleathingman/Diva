@@ -1,4 +1,4 @@
-# Pont entre Diva et le contrôle média de Windows (le même que le mini-lecteur du volume).
+﻿# Pont entre Diva et le contrôle média de Windows (le même que le mini-lecteur du volume).
 # - Écrit sur stdout une ligne JSON à chaque changement : morceau, artiste, état, pochette.
 # - Lit sur stdin des commandes, une par ligne : toggle | next | prev
 # Fonctionne avec toute app qui s'enregistre auprès de Windows (Spotify, navigateurs, ...).
@@ -44,20 +44,27 @@ function Get-Thumbnail($props) {
     }
 }
 
-function Send-MediaCommand($session, [string]$command) {
+function Send-MediaCommand($session, [string]$line) {
     if (-not $session) { return }
+    $command, $argument = $line -split ' ', 2
     switch ($command) {
         'toggle' { $null = Await ($session.TryTogglePlayPauseAsync()) ([bool]) }
         'next'   { $null = Await ($session.TrySkipNextAsync()) ([bool]) }
         'prev'   { $null = Await ($session.TrySkipPreviousAsync()) ([bool]) }
+        # Position en millisecondes ; Windows l'attend en « ticks » de 100 ns.
+        'seek'   { $null = Await ($session.TryChangePlaybackPositionAsync([long]$argument * 10000)) ([bool]) }
     }
+}
+
+function Write-Message($message) {
+    [Console]::Out.WriteLine(($message | ConvertTo-Json -Compress))
+    [Console]::Out.Flush()
 }
 
 $stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput())
 $pendingLine = $stdin.ReadLineAsync()
 $lastJson = ''
-$lastTrackKey = ''
-$thumbnail = $null
+$lastTrackKey = $null
 
 while ($true) {
     $session = $manager.GetCurrentSession()
@@ -70,27 +77,37 @@ while ($true) {
     }
 
     $state = @{ type = 'media'; active = $false }
+    $trackKey = ''
     if ($session) {
         try {
             $props = Await ($session.TryGetMediaPropertiesAsync()) `
                 ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+            $playback = $session.GetPlaybackInfo()
+            # L'app ne met à jour la position qu'à certains moments (lecture, pause, saut) :
+            # l'interface l'extrapole à partir de updatedAt.
+            $timeline = $session.GetTimelineProperties()
             $trackKey = "$($props.Title)|$($props.Artist)"
-            if ($trackKey -ne $lastTrackKey) {
-                $thumbnail = Get-Thumbnail $props
-                $lastTrackKey = $trackKey
-            }
             $state = @{
-                type      = 'media'
-                active    = $true
-                app       = $session.SourceAppUserModelId
-                title     = $props.Title
-                artist    = $props.Artist
-                playing   = $session.GetPlaybackInfo().PlaybackStatus.ToString() -eq 'Playing'
-                thumbnail = $thumbnail
+                type       = 'media'
+                active     = $true
+                app        = $session.SourceAppUserModelId
+                title      = $props.Title
+                artist     = $props.Artist
+                playing    = $playback.PlaybackStatus.ToString() -eq 'Playing'
+                durationMs = [long]($timeline.EndTime - $timeline.StartTime).TotalMilliseconds
+                positionMs = [long]$timeline.Position.TotalMilliseconds
+                updatedAt  = $timeline.LastUpdatedTime.ToUnixTimeMilliseconds()
+                canSeek    = [bool]$playback.Controls.IsPlaybackPositionEnabled
             }
         } catch {
             # La session peut disparaître entre deux lectures : on retente au tour suivant.
         }
+    }
+
+    # La pochette (~100 Ko) part dans son propre message, seulement quand le morceau change.
+    if ($trackKey -ne $lastTrackKey) {
+        Write-Message @{ type = 'thumbnail'; data = $(if ($trackKey) { Get-Thumbnail $props }) }
+        $lastTrackKey = $trackKey
     }
 
     $json = $state | ConvertTo-Json -Compress
