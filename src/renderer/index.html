@@ -11,42 +11,102 @@
     <header class="titlebar">
       <span class="brand"><span class="dot"></span>Diva</span>
       <span id="clock" class="clock"></span>
+      <button id="toggle-settings" class="icon-button" title="Réglages des apps">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
       <button id="hide" class="icon-button" title="Masquer (raccourci global)">
         <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </header>
 
-    <section id="media" class="media idle">
-      <div id="media-backdrop" class="media-backdrop"></div>
-      <img id="cover" class="cover" alt="">
-      <div class="track">
-        <div id="title" class="title">Rien en lecture</div>
-        <div id="artist" class="artist">Lance ta musique</div>
-      </div>
-      <div class="controls">
-        <button data-media="prev" class="icon-button" title="Précédent">
-          <svg viewBox="0 0 24 24"><path d="M6 5v14M18 5l-9 7 9 7z"/></svg>
-        </button>
-        <button id="play" data-media="toggle" class="icon-button play" title="Lecture / pause">
-          <svg class="icon-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
-          <svg class="icon-pause" viewBox="0 0 24 24"><path d="M7 4v16M17 4v16"/></svg>
-        </button>
-        <button data-media="next" class="icon-button" title="Suivant">
-          <svg viewBox="0 0 24 24"><path d="M18 5v14M6 5l9 7-9 7z"/></svg>
-        </button>
-      </div>
-      <button id="open-spotify" class="spotify-button">Ouvrir Spotify</button>
-    </section>
+    <!-- Vue principale -->
+    <div id="view-main" class="view">
+      <section id="media" class="media idle">
+        <div id="media-backdrop" class="media-backdrop"></div>
+        <img id="cover" class="cover" alt="">
+        <div class="track">
+          <div id="title" class="title">Rien en lecture</div>
+          <div id="artist" class="artist">Lance ta musique</div>
+        </div>
+        <div class="controls">
+          <button data-media="prev" class="icon-button" title="Précédent">
+            <svg viewBox="0 0 24 24"><path d="M6 5v14M18 5l-9 7 9 7z"/></svg>
+          </button>
+          <button id="play" data-media="toggle" class="icon-button play" title="Lecture / pause">
+            <svg class="icon-play" viewBox="0 0 24 24"><path d="M7 4l13 8-13 8z"/></svg>
+            <svg class="icon-pause" viewBox="0 0 24 24"><path d="M7 4v16M17 4v16"/></svg>
+          </button>
+          <button data-media="next" class="icon-button" title="Suivant">
+            <svg viewBox="0 0 24 24"><path d="M18 5v14M6 5l9 7-9 7z"/></svg>
+          </button>
+        </div>
+        <button id="open-spotify" class="spotify-button">Ouvrir Spotify</button>
+      </section>
 
-    <section>
-      <h2>Setups</h2>
-      <div id="setups" class="setups"></div>
-    </section>
+      <section>
+        <h2>Setups</h2>
+        <div id="setups" class="setups"></div>
+      </section>
 
-    <section>
-      <h2 id="apps-title">Apps</h2>
-      <div id="apps" class="apps"></div>
-    </section>
+      <section>
+        <h2 id="apps-title">Apps</h2>
+        <div id="apps" class="apps"></div>
+        <p id="apps-empty" class="empty" hidden>Aucune app. Ajoute-en depuis les réglages.</p>
+      </section>
+    </div>
+
+    <!-- Réglages de la grille -->
+    <div id="view-settings" class="view" hidden>
+      <div class="view-header">
+        <button class="icon-button" data-back title="Retour">
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span>Réglages des apps</span>
+      </div>
+
+      <h2>Épinglées</h2>
+      <div id="pinned-list" class="list"></div>
+      <p id="pinned-empty" class="empty" hidden>Aucune. La grille montre tes apps les plus lancées.</p>
+      <button id="add-app" class="wide-button">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        Ajouter une app
+      </button>
+
+      <h2>Grille</h2>
+      <label class="row">
+        <span>Compléter avec mes apps récentes</span>
+        <input id="fill-recent" type="checkbox" class="switch">
+      </label>
+      <div class="row">
+        <span>Nombre d'apps</span>
+        <div class="stepper">
+          <button data-step="-4" class="icon-button" title="Moins">
+            <svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>
+          </button>
+          <span id="grid-count">8</span>
+          <button data-step="4" class="icon-button" title="Plus">
+            <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <h2>Masquées</h2>
+      <div id="hidden-list" class="list"></div>
+      <p id="hidden-empty" class="empty" hidden>Aucune. Clic droit sur une app pour la masquer.</p>
+    </div>
+
+    <!-- Choix d'une app installée -->
+    <div id="view-picker" class="view" hidden>
+      <div class="view-header">
+        <button class="icon-button" data-back="settings" title="Retour">
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span>Ajouter une app</span>
+      </div>
+      <input id="picker-search" class="search" type="search" placeholder="Rechercher une app…" spellcheck="false">
+      <div id="picker-list" class="list scroll"></div>
+      <p id="picker-empty" class="empty" hidden>Chargement…</p>
+    </div>
   </main>
 
   <div id="toast" class="toast"></div>

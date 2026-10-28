@@ -9,6 +9,7 @@ const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
 const MEDIA_HELPER_PATH = path.join(__dirname, '..', 'helpers', 'media.ps1');
 const RECENT_APPS_PATH = path.join(__dirname, '..', 'helpers', 'recent-apps.ps1');
+const INSTALLED_APPS_PATH = path.join(__dirname, '..', 'helpers', 'installed-apps.ps1');
 const RECENT_REFRESH_MS = 10 * 60 * 1000;
 
 let win = null;
@@ -17,6 +18,9 @@ let config = null;
 let mediaHelper = null;
 let recentApps = [];
 let recentRefreshedAt = 0;
+let installedApps = null; // promesse gardée en cache, la liste change rarement
+let installedList = [];
+let lastSavedConfig = '';
 let quitting = false;
 
 // --- Fichiers utilisateur (%APPDATA%\Diva) -------------------------------------------
@@ -47,17 +51,35 @@ function watchConfig() {
   fs.watch(userFile('config.json'), () => {
     // Windows déclenche souvent plusieurs événements pour une seule sauvegarde.
     clearTimeout(timer);
-    timer = setTimeout(applyConfig, 200);
+    timer = setTimeout(() => {
+      // Nos propres sauvegardes (panneau Réglages) sont déjà appliquées.
+      let content = null;
+      try {
+        content = fs.readFileSync(userFile('config.json'), 'utf8');
+      } catch {
+        // Fichier en cours d'écriture : le prochain événement le relira.
+      }
+      if (content !== null && content !== lastSavedConfig) applyConfig();
+    }, 200);
   });
 }
 
 function applyConfig() {
   const previousHotkey = config?.hotkey;
+  const previousDays = gridSettings().recentDays;
   config = loadConfig();
   win?.setAlwaysOnTop(config.alwaysOnTop !== false);
   if (config.hotkey !== previousHotkey) registerHotkey(previousHotkey);
   win?.webContents.send('config', config);
-  refreshRecentApps();
+  sendGrid();
+  if (gridSettings().recentDays !== previousDays) refreshRecentApps();
+}
+
+function saveConfig() {
+  lastSavedConfig = JSON.stringify(config, null, 2);
+  fs.writeFileSync(userFile('config.json'), lastSavedConfig);
+  win?.webContents.send('config', config);
+  sendGrid();
 }
 
 // --- Lancement d'apps ----------------------------------------------------------------
@@ -85,10 +107,10 @@ async function openTarget(target) {
 // Même règle que recent-apps.ps1 : "Visual Studio Code" et "visual-studio code" sont la même app.
 const normalize = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-// Les apps de la config passent avant les récentes : elles gardent leur emoji et leur chemin.
+// Les apps de la config passent en premier : elles gardent leur emoji et leur chemin.
 function findApp(name) {
   const id = normalize(name);
-  return [...config.apps, ...recentApps].find((entry) => normalize(entry.name) === id);
+  return [...config.apps, ...gridSettings().pinned, ...recentApps].find((entry) => normalize(entry.name) === id);
 }
 
 async function launchApp(name) {
@@ -123,16 +145,16 @@ function resolveIconSource(file) {
   }
 }
 
-async function getAppIcon(name) {
-  const entry = findApp(name);
-  if (!entry) return null;
-  if (entry.iconFile) {
-    const image = nativeImage.createFromPath(entry.iconFile);
+// Reçoit l'app telle que l'interface l'affiche ({ open, iconFile }) : ça marche aussi
+// pour les apps installées pas encore épinglées.
+async function getAppIcon({ open, iconFile } = {}) {
+  if (typeof iconFile === 'string' && iconFile) {
+    const image = nativeImage.createFromPath(iconFile);
     return image.isEmpty() ? null : image.toDataURL();
   }
-  if (isUri(expandEnv(entry.open))) return null;
+  if (typeof open !== 'string' || isUri(expandEnv(open))) return null;
   try {
-    const source = resolveIconSource(expandEnv(entry.open));
+    const source = resolveIconSource(expandEnv(open));
     // Un .ico se charge tel quel ; getFileIcon donnerait l'icône du type de fichier.
     const icon = source.toLowerCase().endsWith('.ico')
       ? nativeImage.createFromPath(source).resize({ width: 64, height: 64 })
@@ -143,37 +165,113 @@ async function getAppIcon(name) {
   }
 }
 
-// --- Apps récentes (helpers/recent-apps.ps1) -----------------------------------------
+// --- Grille d'apps : épinglées puis récentes --------------------------------------
 
-function recentSettings() {
-  return { enabled: true, count: 8, days: 30, exclude: [], ...config.recent };
+const GRID_KEYS = ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'];
+
+function gridSettings() {
+  return { count: 8, fillWithRecent: true, recentDays: 30, pinned: [], hidden: [], ...config?.grid };
+}
+
+function updateGrid(patch) {
+  const allowed = Object.fromEntries(Object.entries(patch).filter(([key]) => GRID_KEYS.includes(key)));
+  config = { ...config, grid: { ...gridSettings(), ...allowed } };
+  saveConfig();
+}
+
+function buildGrid() {
+  const settings = gridSettings();
+  const pinnedIds = new Set(settings.pinned.map((entry) => normalize(entry.name)));
+  const hiddenIds = new Set(settings.hidden.map(normalize));
+  const recent = settings.fillWithRecent
+    ? recentApps.filter((entry) => !pinnedIds.has(normalize(entry.name)) && !hiddenIds.has(normalize(entry.name)))
+    : [];
+  const freeSlots = Math.max(0, settings.count - settings.pinned.length);
+  return {
+    title: settings.pinned.length ? 'Mes apps' : 'Récents',
+    apps: [...settings.pinned.map((entry) => ({ ...withCurrentIcon(entry), pinned: true })), ...recent.slice(0, freeSlots)],
+    settings,
+  };
+}
+
+// Le logo d'une app du Store est dans un dossier qui porte sa version : après une mise à
+// jour, l'ancien chemin n'existe plus. On reprend alors celui trouvé par les scripts.
+function withCurrentIcon(entry) {
+  if (!entry.iconFile || fs.existsSync(entry.iconFile)) return entry;
+  const fresh = [...recentApps, ...installedList].find(sameApp(entry.name));
+  return { ...entry, iconFile: fresh?.iconFile };
+}
+
+function sendGrid() {
+  win?.webContents.send('grid', buildGrid());
+}
+
+// Compare une app (objet ou simple nom) à un nom, avec la même règle que normalize().
+const sameApp = (name) => (entry) => normalize(entry.name ?? entry) === normalize(name);
+
+function pinApp({ name, open, iconFile }) {
+  const { pinned } = gridSettings();
+  if (!name || !open || pinned.some(sameApp(name))) return;
+  updateGrid({ pinned: [...pinned, iconFile ? { name, open, iconFile } : { name, open }] });
+}
+
+function unpinApp(name) {
+  updateGrid({ pinned: gridSettings().pinned.filter((entry) => !sameApp(name)(entry)) });
+}
+
+function hideApp(name) {
+  const { hidden } = gridSettings();
+  if (!hidden.some(sameApp(name))) updateGrid({ hidden: [...hidden, name] });
+}
+
+function showAppMenu(name) {
+  const pinned = gridSettings().pinned.some(sameApp(name));
+  // Pour épingler une récente, on garde son icône de package si elle en a une.
+  const entry = recentApps.find(sameApp(name)) ?? findApp(name);
+  Menu.buildFromTemplate([
+    pinned
+      ? { label: 'Désépingler', click: () => unpinApp(name) }
+      : { label: 'Épingler', click: () => entry && pinApp(entry) },
+    { label: 'Masquer de la grille', visible: !pinned, click: () => hideApp(name) },
+    { type: 'separator' },
+    { label: 'Réglages des apps…', click: () => win.webContents.send('open-settings') },
+  ]).popup({ window: win });
+}
+
+function runAppScript(script, args = []) {
+  return new Promise((resolve, reject) => {
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args],
+      { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+        if (error) return reject(error);
+        try {
+          resolve(JSON.parse(stdout));
+        } catch (parseError) {
+          reject(parseError);
+        }
+      });
+  });
 }
 
 function refreshRecentApps() {
-  const settings = recentSettings();
   recentRefreshedAt = Date.now();
-  if (!settings.enabled) {
-    recentApps = [];
-    win?.webContents.send('recent-apps', recentApps);
-    return;
-  }
-  execFile('powershell.exe', [
-    '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', RECENT_APPS_PATH, '-Days', String(settings.days),
-  ], { windowsHide: true, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-    if (error) {
-      console.error('[recent-apps]', error.message);
-      return;
-    }
-    try {
-      const excluded = new Set(settings.exclude.map(normalize));
-      recentApps = JSON.parse(stdout)
-        .filter((entry) => !excluded.has(normalize(entry.name)))
-        .slice(0, settings.count);
-      win?.webContents.send('recent-apps', recentApps);
-    } catch (parseError) {
-      console.error('[recent-apps]', parseError.message);
-    }
+  runAppScript(RECENT_APPS_PATH, ['-Days', String(gridSettings().recentDays)])
+    .then((apps) => {
+      recentApps = apps;
+      sendGrid();
+    })
+    .catch((error) => console.error('[recent-apps]', error.message));
+}
+
+function getInstalledApps() {
+  installedApps ??= runAppScript(INSTALLED_APPS_PATH).then((apps) => {
+    installedList = apps;
+    return apps;
+  }).catch((error) => {
+    console.error('[installed-apps]', error.message);
+    installedApps = null;
+    return [];
   });
+  return installedApps;
 }
 
 // --- Contrôle média (helpers/media.ps1) ----------------------------------------------
@@ -286,10 +384,14 @@ function createTray() {
 // --- Communication avec l'interface --------------------------------------------------
 
 ipcMain.handle('get-config', () => config);
-ipcMain.handle('get-recent-apps', () => recentApps);
+ipcMain.handle('get-grid', () => buildGrid());
+ipcMain.handle('get-installed-apps', () => getInstalledApps());
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
 ipcMain.handle('run-setup', (_event, name) => runSetup(name));
-ipcMain.handle('get-app-icon', (_event, name) => getAppIcon(name));
+ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
+ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
+ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
+ipcMain.on('app-menu', (_event, name) => showAppMenu(name));
 ipcMain.on('media-command', (_event, command) => sendMediaCommand(command));
 ipcMain.on('hide', () => win.hide());
 ipcMain.on('resize', (_event, height) => win.setContentSize(WIDTH, Math.ceil(height)));
@@ -312,7 +414,10 @@ if (!app.requestSingleInstanceLock()) {
     watchConfig();
     startMediaHelper();
     refreshRecentApps();
-    setInterval(refreshRecentApps, RECENT_REFRESH_MS);
+    setInterval(() => {
+      installedApps = null;
+      refreshRecentApps();
+    }, RECENT_REFRESH_MS);
   });
 
   app.on('before-quit', () => {

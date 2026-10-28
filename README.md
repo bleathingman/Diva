@@ -35,17 +35,29 @@ Clic droit sur l'icône → **Modifier la config**. Le fichier (`%APPDATA%\Diva\
 - `icon` (facultatif) : un emoji. Sans lui, Diva prend la vraie icône de l'app.
 - Un setup liste des **noms** d'apps déclarées dans `apps`.
 
-### Apps récentes
+### Grille d'apps
 
-Par défaut, la grille affiche les apps **les plus lancées ces 30 derniers jours** (8 maximum), lues dans l'historique de Windows (le même que « Plus utilisées » du menu Démarrer). Elle se met à jour toutes les 10 minutes et quand on rouvre le widget.
+La grille affiche d'abord tes apps **épinglées**, puis la complète avec les apps **les plus lancées ces 30 derniers jours**, lues dans l'historique de Windows (le même que « Plus utilisées » du menu Démarrer). Elle se met à jour toutes les 10 minutes et quand on rouvre le widget.
+
+Tout se règle dans le widget :
+
+- **Engrenage** → Réglages des apps : réordonner ou retirer les épinglées, réafficher les masquées, nombre d'apps (4 à 16), compléter ou non avec les récentes.
+- **+ Ajouter une app** : recherche parmi toutes les apps installées (menu Démarrer, Store, jeux Steam).
+- **Clic droit sur une app** de la grille : épingler, désépingler, masquer.
+
+Ces réglages sont enregistrés dans la config :
 
 ```json
-"recent": { "enabled": true, "count": 8, "days": 30, "exclude": ["Notepad"] }
+"grid": {
+  "count": 8,
+  "fillWithRecent": true,
+  "recentDays": 30,
+  "pinned": [{ "name": "Spotify", "open": "shell:AppsFolder\\SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify" }],
+  "hidden": ["Notepad"]
+}
 ```
 
-- `exclude` : noms d'apps à ne jamais afficher.
-- `"enabled": false` : la grille montre la liste `apps` à la place.
-- Windows ne compte que les lancements depuis le menu Démarrer, la barre des tâches ou le bureau (pas les jeux lancés depuis Steam, par exemple). Les outils système et les installeurs sont ignorés.
+Windows ne compte que les lancements depuis le menu Démarrer, la barre des tâches ou le bureau (pas les jeux lancés depuis Steam, par exemple). Les outils système et les installeurs sont ignorés.
 
 La config par défaut est dans [src/default-config.json](src/default-config.json).
 
@@ -59,7 +71,9 @@ src/
 └── renderer/          # l'interface du widget (HTML/CSS/JS)
 helpers/
 ├── media.ps1          # pont avec le contrôle média de Windows (titre, pochette, lecture)
-└── recent-apps.ps1    # apps les plus lancées, d'après l'historique UserAssist de Windows
+├── recent-apps.ps1    # apps les plus lancées, d'après l'historique UserAssist de Windows
+├── installed-apps.ps1 # toutes les apps installées (pour « Ajouter une app »)
+└── common.ps1         # fonctions partagées par les deux scripts d'apps
 ```
 
 La musique passe par le contrôle média de Windows : ça marche avec Spotify, mais aussi YouTube dans le navigateur, etc.
