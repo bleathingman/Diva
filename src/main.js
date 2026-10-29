@@ -242,8 +242,17 @@ function pinApp({ name, open, iconFile }) {
 
 const isPathLike = (value) => /^([a-z]:[\\/]|\\\\|%)/i.test(value);
 
+// Noms d'exécutables qui ne disent rien du programme (même liste que recent-apps.ps1).
+const GENERIC_EXE_NAMES = ['game', 'launcher', 'start', 'play', 'main', 'nw', 'nwjs', 'electron', 'unity'];
+
 function defaultLinkName(open) {
-  if (isPathLike(open)) return path.basename(expandEnv(open).replace(/[\\/]+$/, '')) || open;
+  if (isPathLike(open)) {
+    const file = expandEnv(open).replace(/[\\/]+$/, '');
+    // Pour une app on retire l'extension ; "Game.exe" -> nom du dossier qui le contient.
+    const name = /\.(exe|lnk|url|bat|cmd)$/i.test(file) ? path.parse(file).name : path.basename(file);
+    if (GENERIC_EXE_NAMES.includes(name.toLowerCase())) return path.basename(path.dirname(file));
+    return name || open;
+  }
   try {
     return new URL(open).hostname.replace(/^www\./, '') || open;
   } catch {
@@ -327,15 +336,27 @@ async function fetchFavicon(pageUrl) {
   return null;
 }
 
-async function pickFolder() {
+// Boîte de dialogue Windows ; renvoie { path, name } avec un nom proposé, ou null si annulée.
+async function pickPath(options) {
   blurGuard = true;
   try {
-    const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ['openDirectory'] });
-    return canceled ? null : filePaths[0];
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, options);
+    return canceled ? null : { path: filePaths[0], name: defaultLinkName(filePaths[0]) };
   } finally {
     blurGuard = false;
   }
 }
+
+const pickFolder = () => pickPath({ properties: ['openDirectory'] });
+
+// Pour une app que Diva ne détecte pas (jeu posé sur le bureau, app portable...).
+const pickApp = () => pickPath({
+  properties: ['openFile'],
+  filters: [
+    { name: 'Applications et raccourcis', extensions: ['exe', 'lnk', 'url', 'bat', 'cmd'] },
+    { name: 'Tous les fichiers', extensions: ['*'] },
+  ],
+});
 
 function unpinApp(name) {
   updateGrid({ pinned: gridSettings().pinned.filter((entry) => !sameApp(name)(entry)) });
@@ -681,6 +702,7 @@ ipcMain.handle('get-grid', () => buildGrid());
 ipcMain.handle('get-window-settings', () => windowSettings());
 ipcMain.handle('add-link', (_event, link) => addLink(link));
 ipcMain.handle('pick-folder', () => pickFolder());
+ipcMain.handle('pick-app', () => pickApp());
 ipcMain.handle('get-installed-apps', () => getInstalledApps());
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
 ipcMain.handle('get-search-entries', () => getSearchEntries());

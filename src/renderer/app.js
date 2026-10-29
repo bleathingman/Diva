@@ -673,9 +673,26 @@ function openLinkForm() {
   $('#link-target').focus();
 }
 
-$('#pick-folder').addEventListener('click', async () => {
-  const folder = await window.diva.pickFolder();
-  if (folder) $('#link-target').value = folder;
+// Remplit le formulaire avec le choix de la boîte de dialogue ; le nom proposé ne remplace
+// pas un nom déjà tapé.
+function fillLinkForm(picked) {
+  if (!picked) return;
+  $('#link-target').value = picked.path;
+  if (!$('#link-name').value.trim()) $('#link-name').value = picked.name;
+  $('#link-error').hidden = true;
+}
+
+$('#pick-folder').addEventListener('click', async () => fillLinkForm(await window.diva.pickFolder()));
+$('#pick-app').addEventListener('click', async () => fillLinkForm(await window.diva.pickApp()));
+
+// Depuis « + App » : une app que Diva n'a pas trouvée. On passe par le formulaire de lien
+// pour pouvoir corriger le nom avant d'épingler.
+$('#picker-browse').addEventListener('click', async () => {
+  const picked = await window.diva.pickApp();
+  if (!picked) return;
+  showView('link');
+  fillLinkForm(picked);
+  $('#link-name').select();
 });
 
 $('#link-form').addEventListener('submit', async (event) => {
@@ -687,7 +704,7 @@ $('#link-form').addEventListener('submit', async (event) => {
     $('#link-error').hidden = false;
     return;
   }
-  toast('Lien épinglé');
+  toast('Épinglé');
   showView('settings');
 });
 

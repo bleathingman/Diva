@@ -172,10 +172,13 @@
       </div>
       <form id="link-form" class="form" autocomplete="off">
         <label class="field">
-          <span>Site ou dossier</span>
+          <span>Site, dossier ou app</span>
           <input id="link-target" class="search" placeholder="youtube.com ou C:\Users\…" spellcheck="false">
         </label>
-        <button type="button" id="pick-folder" class="text-button">Choisir un dossier…</button>
+        <div class="text-buttons">
+          <button type="button" id="pick-folder" class="text-button">Choisir un dossier…</button>
+          <button type="button" id="pick-app" class="text-button">Choisir une app…</button>
+        </div>
         <label class="field">
           <span>Nom</span>
           <input id="link-name" class="search" placeholder="Automatique" spellcheck="false">
@@ -196,6 +199,10 @@
       <input id="picker-search" class="search" type="search" placeholder="Rechercher une app…" spellcheck="false">
       <div id="picker-list" class="list scroll"></div>
       <p id="picker-empty" class="empty" hidden>Chargement…</p>
+      <button id="picker-browse" class="wide-button">
+        <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        Pas dans la liste ? Parcourir…
+      </button>
     </div>
     <!-- Poignées de redimensionnement (coins du bas) -->
     <div class="resize-grip left" data-side="left" title="Redimensionner"></div>

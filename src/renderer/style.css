@@ -916,9 +916,14 @@ h2 {
   margin: 0;
 }
 
+.text-buttons {
+  display: flex;
+  gap: 16px;
+  margin: -4px 0 0 2px;
+}
+
 .text-button {
   align-self: flex-start;
-  margin: -4px 0 0 2px;
   font-size: 12px;
   color: var(--muted);
   transition: color 0.2s var(--ease);

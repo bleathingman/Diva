@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('diva', {
   getWindowSettings: () => ipcRenderer.invoke('get-window-settings'),
   addLink: (link) => ipcRenderer.invoke('add-link', { name: link.name, target: link.target }),
   pickFolder: () => ipcRenderer.invoke('pick-folder'),
+  pickApp: () => ipcRenderer.invoke('pick-app'),
   updateGrid: (patch) => ipcRenderer.send('update-grid', patch),
   updateWindow: (patch) => ipcRenderer.send('update-window', patch),
   hover: (isHovered) => ipcRenderer.send('hover', isHovered),
