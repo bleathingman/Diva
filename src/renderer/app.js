@@ -94,6 +94,8 @@ function renderMedia(message) {
   $('#title').textContent = media.active ? media.title || 'Titre inconnu' : 'Rien en lecture';
   $('#artist').textContent = media.active ? media.artist || '' : 'Lance ta musique';
   renderProgress();
+  refreshLike();
+  updateVisualizer();
 }
 
 const formatTime = (ms) => {
@@ -144,7 +146,36 @@ function renderAudio(state) {
   $('#audio').classList.toggle('muted', audio.muted);
   setSlider($('#master'), audio.master);
   $('#master-value').textContent = audio.master;
+  renderOutputs(audio.outputs ?? []);
   renderMixer();
+}
+
+// --- Sortie audio ---
+
+// "Headphones (3- A50 Game)" -> "A50 Game" ; "2 - PHL 273V7 (AMD High...)" -> "PHL 273V7".
+function shortOutputName(name) {
+  const inner = /\(\d+-\s*(.+)\)$/.exec(name);
+  if (inner) return inner[1];
+  return name.replace(/\s*\(.*\)$/, '').replace(/^\d+\s*-\s*/, '');
+}
+
+function renderOutputs(outputs) {
+  const container = $('#outputs');
+  container.hidden = outputs.length < 2;
+  const key = outputs.map((output) => `${output.id}:${output.isDefault}`).join('|');
+  if (key === container.dataset.key) return;
+  container.dataset.key = key;
+  container.replaceChildren();
+  for (const output of outputs) {
+    const button = document.createElement('button');
+    button.textContent = shortOutputName(output.name);
+    button.title = output.name;
+    button.classList.toggle('active', output.isDefault);
+    button.addEventListener('click', () => window.diva.audio(`output ${output.id}`));
+    container.append(button);
+  }
+  // La capture du visualiseur suit la sortie qui était active quand elle a démarré.
+  restartVisualizer();
 }
 
 function mixerRow(app) {
@@ -286,17 +317,18 @@ function renderGrid(next) {
 // --- Vues : principale, réglages, ajout d'app ---
 
 let currentView = 'main';
-const SETTINGS_VIEWS = ['settings', 'picker', 'link'];
+const SETTINGS_VIEWS = ['settings', 'picker', 'link', 'spotify'];
 
 function showView(name) {
   currentView = name;
-  for (const view of ['main', 'search', 'settings', 'picker', 'link']) {
+  for (const view of ['main', 'search', 'settings', 'picker', 'link', 'spotify']) {
     $(`#view-${view}`).hidden = view !== name;
   }
   $('#toggle-settings').classList.toggle('active', SETTINGS_VIEWS.includes(name));
   if (name === 'settings') renderSettings();
   if (name === 'picker') openPicker();
   if (name === 'link') openLinkForm();
+  if (name === 'spotify') openSpotifyForm();
   if (name === 'search') openSearch();
   $('#open-search').classList.toggle('active', name === 'search');
 }
@@ -443,6 +475,206 @@ function renderPicker() {
 }
 
 $('#picker-search').addEventListener('input', renderPicker);
+
+// --- ❤ Spotify ---
+
+let spotifyStatus = { connected: false, clientId: '', redirectUri: '' };
+let likeKey = '';
+let likedTrack = null; // { uri, liked }
+let lastLikeError = '';
+
+function renderLike() {
+  const button = $('#like');
+  button.hidden = !likedTrack;
+  button.classList.toggle('liked', Boolean(likedTrack?.liked));
+  button.title = likedTrack?.liked ? 'Retirer des titres likés' : 'Ajouter aux titres likés';
+}
+
+function showLikeError(message) {
+  if (message !== lastLikeError) toast(message);
+  lastLikeError = message;
+}
+
+// Windows ne donne que le titre : à chaque morceau, on demande à Spotify lequel c'est.
+async function refreshLike() {
+  const isSpotify = media.active && /spotify/i.test(media.app ?? '');
+  const key = isSpotify && spotifyStatus.connected ? `${media.title}|${media.artist}` : '';
+  if (key === likeKey) return;
+  likeKey = key;
+  likedTrack = null;
+  renderLike();
+  if (!key) return;
+  const result = await window.diva.spotifyLookup(media.title);
+  if (key !== likeKey) return; // le morceau a changé entre-temps
+  if (result?.error) {
+    showLikeError(result.error);
+    renderSpotifyStatus(await window.diva.spotifyStatus());
+    return;
+  }
+  likedTrack = result;
+  renderLike();
+}
+
+$('#like').addEventListener('click', async () => {
+  if (!likedTrack) return;
+  const track = likedTrack;
+  const liked = !track.liked;
+  likedTrack = { ...track, liked };
+  renderLike();
+  const error = await window.diva.spotifyLike(track.uri, liked);
+  if (!error) return;
+  if (likedTrack?.uri === track.uri) likedTrack = track;
+  renderLike();
+  showLikeError(error);
+});
+
+function renderSpotifyStatus(status) {
+  spotifyStatus = status;
+  $('#spotify-state').textContent = status.connected ? 'Connecté' : 'Non connecté';
+  $('#spotify-action').textContent = status.connected ? 'Déconnecter' : 'Connecter';
+  $('#spotify-redirect').textContent = status.redirectUri;
+  refreshLike();
+}
+
+$('#spotify-action').addEventListener('click', async () => {
+  if (spotifyStatus.connected) renderSpotifyStatus(await window.diva.spotifyDisconnect());
+  else showView('spotify');
+});
+$('#spotify-dashboard').addEventListener('click', () => window.diva.openExternal('https://developer.spotify.com/dashboard'));
+$('#spotify-redirect').addEventListener('click', async () => {
+  await navigator.clipboard.writeText(spotifyStatus.redirectUri);
+  toast('Adresse copiée');
+});
+
+function openSpotifyForm() {
+  $('#spotify-client-id').value = spotifyStatus.clientId;
+  $('#spotify-error').hidden = true;
+  $('#spotify-client-id').focus();
+}
+
+$('#spotify-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = event.target.querySelector('[type="submit"]');
+  submit.disabled = true;
+  submit.textContent = 'Valide dans ton navigateur…';
+  const status = await window.diva.spotifyConnect($('#spotify-client-id').value);
+  submit.disabled = false;
+  submit.textContent = 'Connecter';
+  renderSpotifyStatus(status);
+  if (status.error) {
+    $('#spotify-error').textContent = status.error;
+    $('#spotify-error').hidden = false;
+    return;
+  }
+  toast('Spotify connecté');
+  showView('settings');
+});
+
+// --- Visualiseur : barres grises calées sur le son qui sort du PC ---
+
+const BAR_COUNT = 36;
+const STOP_DELAY_MS = 5000; // une courte pause ne relance pas toute la capture
+let visualizerEnabled = true;
+let capture = null; // { stream, context, analyser, bins }
+let captureStarting = false;
+let visualizerFrame = null;
+let captureStopTimer = null;
+
+// Bandes de fréquences espacées comme l'oreille les perçoit : serrées dans les graves.
+function barBands(binCount, sampleRate) {
+  const low = 50;
+  const high = 14000;
+  const hzPerBin = sampleRate / 2 / binCount;
+  return Array.from({ length: BAR_COUNT }, (_, i) => {
+    const start = Math.floor((low * (high / low) ** (i / BAR_COUNT)) / hzPerBin);
+    const end = Math.ceil((low * (high / low) ** ((i + 1) / BAR_COUNT)) / hzPerBin);
+    return [start, Math.max(start + 1, end)];
+  });
+}
+
+async function startCapture() {
+  if (capture || captureStarting) return;
+  captureStarting = true;
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    // L'image de l'écran est imposée par l'API : seul le son nous intéresse.
+    stream.getVideoTracks().forEach((track) => track.stop());
+    const context = new AudioContext();
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.78;
+    context.createMediaStreamSource(stream).connect(analyser);
+    capture = {
+      stream, context, analyser,
+      data: new Uint8Array(analyser.frequencyBinCount),
+      bands: barBands(analyser.frequencyBinCount, context.sampleRate),
+    };
+    drawVisualizer();
+  } catch (error) {
+    console.error('[visualiseur]', error.message);
+  } finally {
+    captureStarting = false;
+  }
+}
+
+function stopCapture() {
+  if (!capture) return;
+  capture.stream.getTracks().forEach((track) => track.stop());
+  capture.context.close();
+  capture = null;
+  cancelAnimationFrame(visualizerFrame);
+  const canvas = $('#visualizer');
+  canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function updateVisualizer() {
+  const wanted = visualizerEnabled && media.playing && !document.hidden;
+  if (wanted) {
+    clearTimeout(captureStopTimer);
+    captureStopTimer = null;
+    startCapture();
+  } else if (capture && !captureStopTimer) {
+    captureStopTimer = setTimeout(() => {
+      captureStopTimer = null;
+      stopCapture();
+    }, STOP_DELAY_MS);
+  }
+}
+
+function restartVisualizer() {
+  if (!capture) return;
+  stopCapture();
+  updateVisualizer();
+}
+
+function drawVisualizer() {
+  if (!capture) return;
+  visualizerFrame = requestAnimationFrame(drawVisualizer);
+  const canvas = $('#visualizer');
+  const { clientWidth: width, clientHeight: height } = canvas;
+  const scale = window.devicePixelRatio;
+  if (canvas.width !== Math.round(width * scale)) canvas.width = Math.round(width * scale);
+  if (canvas.height !== Math.round(height * scale)) canvas.height = Math.round(height * scale);
+
+  capture.analyser.getByteFrequencyData(capture.data);
+  const draw = canvas.getContext('2d');
+  draw.setTransform(scale, 0, 0, scale, 0, 0);
+  draw.clearRect(0, 0, width, height);
+  draw.fillStyle = 'rgba(255, 255, 255, 0.13)';
+  const gap = 2;
+  const barWidth = (width - gap * (BAR_COUNT - 1)) / BAR_COUNT;
+  capture.bands.forEach(([start, end], index) => {
+    let peak = 0;
+    for (let bin = start; bin < end && bin < capture.data.length; bin++) peak = Math.max(peak, capture.data[bin]);
+    const barHeight = (peak / 255) ** 2 * height;
+    if (barHeight < 1) return;
+    draw.beginPath();
+    draw.roundRect(index * (barWidth + gap), height - barHeight, barWidth, barHeight, 1.5);
+    draw.fill();
+  });
+}
+
+document.addEventListener('visibilitychange', updateVisualizer);
 
 // --- Recherche ---
 
@@ -622,6 +854,9 @@ function renderWindowSettings(settings) {
   $('#always-on-top').checked = settings.alwaysOnTop;
   $('#hide-on-blur').checked = settings.hideOnBlur;
   $('#snap-to-edges').checked = settings.snapToEdges;
+  $('#visualizer-toggle').checked = settings.visualizer;
+  visualizerEnabled = settings.visualizer;
+  updateVisualizer();
   setSlider($('#idle-opacity'), settings.idleOpacity);
   for (const button of document.querySelectorAll('[data-scale]')) {
     button.classList.toggle('active', Math.abs(Number(button.dataset.scale) - settings.scale) < 0.01);
@@ -629,7 +864,7 @@ function renderWindowSettings(settings) {
   if (!$('#idle-opacity').dataset.dragging) $('#idle-opacity-value').textContent = settings.idleOpacity;
 }
 
-for (const [id, key] of [['#always-on-top', 'alwaysOnTop'], ['#hide-on-blur', 'hideOnBlur'], ['#snap-to-edges', 'snapToEdges']]) {
+for (const [id, key] of [['#always-on-top', 'alwaysOnTop'], ['#hide-on-blur', 'hideOnBlur'], ['#snap-to-edges', 'snapToEdges'], ['#visualizer-toggle', 'visualizer']]) {
   $(id).addEventListener('change', (event) => window.diva.updateWindow({ [key]: event.target.checked }));
 }
 
@@ -729,7 +964,7 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key !== 'Escape') return;
-  if (currentView === 'picker' || currentView === 'link') showView('settings');
+  if (['picker', 'link', 'spotify'].includes(currentView)) showView('settings');
   else if (currentView === 'settings' || currentView === 'search') showView('main');
 });
 
@@ -752,6 +987,7 @@ window.diva.onToast(toast);
 window.diva.getGrid().then(renderGrid);
 window.diva.onWindowSettings(renderWindowSettings);
 window.diva.getWindowSettings().then(renderWindowSettings);
+window.diva.spotifyStatus().then(renderSpotifyStatus);
 
 // Opacité au repos : le processus principal repasse à 100 % tant que la souris est dessus.
 document.documentElement.addEventListener('mouseenter', () => window.diva.hover(true));

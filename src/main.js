@@ -1,9 +1,10 @@
-const { app, BrowserWindow, Tray, Menu, dialog, globalShortcut, ipcMain, net, shell, screen, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, desktopCapturer, dialog, globalShortcut, ipcMain, net, session, shell, screen, nativeImage } = require('electron');
 const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
+const { createSpotify, REDIRECT_URI } = require('./spotify');
 
 const WIDTH = 300; // largeur à l'échelle 1 ; l'interface est toujours dessinée sur cette base
 const MIN_SCALE = 0.75;
@@ -36,6 +37,7 @@ let hovered = false;
 let currentScale = 1;
 let contentHeight = 400; // hauteur du widget en pixels d'interface, avant mise à l'échelle
 let resizeDrag = null;
+let spotify = null;
 let blurGuard = false; // vrai pendant un menu ou une boîte de dialogue : la perte de focus est normale
 let hiddenByBlurAt = 0;
 
@@ -174,7 +176,8 @@ async function getAppIcon({ open, iconFile } = {}) {
 
 const SECTION_KEYS = {
   grid: ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'],
-  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity', 'scale'],
+  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity', 'scale', 'visualizer'],
+  spotify: ['clientId'],
 };
 
 function gridSettings() {
@@ -185,15 +188,20 @@ function windowSettings() {
   // alwaysOnTop était à la racine de la config avant le panneau Réglages : on le reprend.
   return {
     alwaysOnTop: config?.alwaysOnTop ?? true, hideOnBlur: false, snapToEdges: true, idleOpacity: 100, scale: 1,
+    visualizer: true,
     ...config?.window,
   };
+}
+
+function spotifySettings() {
+  return { clientId: '', ...config?.spotify };
 }
 
 function updateSection(section, patch) {
   const keys = SECTION_KEYS[section];
   if (!keys) return;
   const allowed = Object.fromEntries(Object.entries(patch).filter(([key]) => keys.includes(key)));
-  const current = section === 'grid' ? gridSettings() : windowSettings();
+  const current = { grid: gridSettings, window: windowSettings, spotify: spotifySettings }[section]();
   config = { ...config, [section]: { ...current, ...allowed } };
   saveConfig();
   if (section === 'window') applyWindowSettings();
@@ -479,6 +487,36 @@ async function openEntry({ name, open } = {}) {
   return error ? `${name} : ${error}` : null;
 }
 
+// --- Spotify (src/spotify.js) -------------------------------------------------------
+
+function spotifyStatus() {
+  return { connected: spotify.isConnected(), clientId: spotifySettings().clientId, redirectUri: REDIRECT_URI };
+}
+
+// Renvoie { error } ou le nouvel état.
+async function connectSpotify(clientId) {
+  updateSection('spotify', { clientId: String(clientId ?? '').trim() });
+  try {
+    await spotify.connect();
+    win.show();
+    return spotifyStatus();
+  } catch (error) {
+    return { ...spotifyStatus(), error: error.message };
+  }
+}
+
+// --- Son du système pour le visualiseur ---------------------------------------------
+
+// getDisplayMedia() ne demande rien à l'utilisateur : on répond à sa place avec la capture
+// « loopback » de Windows (ce qui sort des enceintes), le son reste écoutable normalement.
+// Le son n'est qu'analysé dans l'interface, jamais enregistré ni envoyé.
+function allowSystemAudioCapture() {
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const [source] = await desktopCapturer.getSources({ types: ['screen'] });
+    callback({ video: source, audio: 'loopback' });
+  });
+}
+
 // --- Modules permanents : média (helpers/media.ps1) et volume (helpers/audio.ps1) ----
 
 // Lance un script PowerShell qui tourne en continu : chaque ligne JSON qu'il écrit part vers
@@ -703,6 +741,15 @@ ipcMain.handle('get-window-settings', () => windowSettings());
 ipcMain.handle('add-link', (_event, link) => addLink(link));
 ipcMain.handle('pick-folder', () => pickFolder());
 ipcMain.handle('pick-app', () => pickApp());
+ipcMain.handle('spotify-status', () => spotifyStatus());
+ipcMain.handle('spotify-connect', (_event, clientId) => connectSpotify(clientId));
+ipcMain.handle('spotify-disconnect', () => {
+  spotify.disconnect();
+  return spotifyStatus();
+});
+ipcMain.handle('spotify-lookup', (_event, title) => spotify.lookup(String(title)).catch((error) => ({ error: error.message })));
+ipcMain.handle('spotify-like', (_event, uri, liked) => spotify.setLiked(String(uri), Boolean(liked))
+  .then(() => null, (error) => error.message));
 ipcMain.handle('get-installed-apps', () => getInstalledApps());
 ipcMain.handle('launch-app', (_event, name) => launchApp(name));
 ipcMain.handle('get-search-entries', () => getSearchEntries());
@@ -739,6 +786,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     config = loadConfig();
+    spotify = createSpotify({ tokenFile: userFile('spotify.token'), getClientId: () => spotifySettings().clientId });
+    allowSystemAudioCapture();
     createWindow();
     createTray();
     registerHotkey();

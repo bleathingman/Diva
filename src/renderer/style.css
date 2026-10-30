@@ -117,7 +117,7 @@ button {
 .media {
   position: relative;
   display: grid;
-  grid-template-columns: 56px 1fr;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
   gap: 12px;
   padding: 12px;
   border-radius: var(--radius);
@@ -320,6 +320,35 @@ button {
   text-align: right;
 }
 
+/* --- ❤ et visualiseur --- */
+
+.like {
+  align-self: center;
+}
+
+.like svg {
+  width: 17px;
+  height: 17px;
+}
+
+.like.liked {
+  color: var(--white);
+}
+
+.like.liked svg {
+  fill: currentColor;
+}
+
+.media > canvas.visualizer {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 56px;
+  pointer-events: none;
+}
+
 /* --- Volume --- */
 
 .audio {
@@ -355,6 +384,20 @@ button {
 
 .audio.muted #master {
   opacity: 0.4;
+}
+
+.outputs {
+  flex-wrap: wrap;
+  margin: 4px 0 4px 6px;
+}
+
+.outputs button {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
 }
 
 #toggle-mixer svg {
@@ -889,6 +932,51 @@ h2 {
   font-size: 11px;
   color: var(--faint);
   text-align: center;
+}
+
+/* --- Spotify --- */
+
+.pill-button {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  transition: background 0.2s var(--ease);
+}
+
+.pill-button:hover {
+  background: var(--surface-active);
+}
+
+.setting-text {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.setting-text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.copy-line {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font: 12px Consolas, monospace;
+  color: var(--text);
+  text-align: left;
+  user-select: text;
+}
+
+.copy-line:hover {
+  border-color: var(--border-strong);
+}
+
+.primary-button:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* --- Formulaire d'ajout de lien --- */

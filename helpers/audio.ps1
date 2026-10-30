@@ -1,8 +1,9 @@
 ﻿# Pont entre Diva et le mélangeur de volume de Windows (Core Audio).
 # - Écrit sur stdout une ligne JSON à chaque changement :
-#   { type: 'audio', master, muted, apps: [{ id, name, path, volume, muted, active }] }
+#   { type: 'audio', master, muted, apps: [{ id, name, path, volume, muted, active }],
+#     outputs: [{ id, name, isDefault }] }
 # - Lit sur stdin des commandes, une par ligne :
-#   master <0-100> | mute <0|1> | app <0-100> <id> | appmute <0|1> <id>
+#   master <0-100> | mute <0|1> | app <0-100> <id> | appmute <0|1> <id> | output <id>
 #   (id = nom du processus, ex. "Spotify" ; toutes ses sessions audio sont réglées ensemble)
 
 $ErrorActionPreference = 'Stop'
@@ -22,13 +23,61 @@ namespace DivaAudio {
 
     [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDeviceEnumerator {
-        int EnumAudioEndpoints();
+        [PreserveSig] int EnumAudioEndpoints(int dataFlow, int stateMask, out IMMDeviceCollection devices);
         [PreserveSig] int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice device);
     }
 
     [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     interface IMMDevice {
         [PreserveSig] int Activate(ref Guid iid, int context, IntPtr parameters, [MarshalAs(UnmanagedType.IUnknown)] out object result);
+        [PreserveSig] int OpenPropertyStore(int access, out IPropertyStore properties);
+        [PreserveSig] int GetId([MarshalAs(UnmanagedType.LPWStr)] out string id);
+    }
+
+    [Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IMMDeviceCollection {
+        [PreserveSig] int GetCount(out int count);
+        [PreserveSig] int Item(int index, out IMMDevice device);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct PropertyKey {
+        public Guid FormatId;
+        public int PropertyId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct PropVariant {
+        public ushort Type;
+        public ushort Reserved1, Reserved2, Reserved3;
+        public IntPtr Value;
+        public IntPtr Padding;
+    }
+
+    [Guid("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPropertyStore {
+        int GetCount();
+        int GetAt();
+        [PreserveSig] int GetValue(ref PropertyKey key, out PropVariant value);
+    }
+
+    // Interface non documentée de Windows, la seule qui change la sortie par défaut.
+    [ComImport, Guid("870AF99C-171D-4F9E-AF0D-E63DF40C2BC9")]
+    class PolicyConfigClient {}
+
+    [Guid("F8679F50-850A-41CF-9C72-430F290290C8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    interface IPolicyConfig {
+        int GetMixFormat();
+        int GetDeviceFormat();
+        int ResetDeviceFormat();
+        int SetDeviceFormat();
+        int GetProcessingPeriod();
+        int SetProcessingPeriod();
+        int GetShareMode();
+        int SetShareMode();
+        int GetPropertyValue();
+        int SetPropertyValue();
+        [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string deviceId, int role);
     }
 
     [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -86,6 +135,12 @@ namespace DivaAudio {
         [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool mute);
     }
 
+    public class AudioOutput {
+        public string Id;
+        public string Name;
+        public bool IsDefault;
+    }
+
     public class AppAudio {
         public string Id;
         public string Name;
@@ -104,6 +159,47 @@ namespace DivaAudio {
             IMMDevice device;
             Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0 /* rendu */, 1 /* multimédia */, out device));
             return device;
+        }
+
+        [DllImport("ole32.dll")]
+        static extern int PropVariantClear(ref PropVariant value);
+
+        static string FriendlyName(IMMDevice device) {
+            IPropertyStore properties;
+            Marshal.ThrowExceptionForHR(device.OpenPropertyStore(0 /* lecture */, out properties));
+            // PKEY_Device_FriendlyName
+            var key = new PropertyKey { FormatId = new Guid("A45C254E-DF1C-4EFD-8020-67D146A850E0"), PropertyId = 14 };
+            PropVariant value;
+            Marshal.ThrowExceptionForHR(properties.GetValue(ref key, out value));
+            string name = value.Type == 31 /* VT_LPWSTR */ ? Marshal.PtrToStringUni(value.Value) : null;
+            PropVariantClear(ref value);
+            return name;
+        }
+
+        public static List<AudioOutput> GetOutputs() {
+            var enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
+            string defaultId;
+            Speakers().GetId(out defaultId);
+            IMMDeviceCollection devices;
+            Marshal.ThrowExceptionForHR(enumerator.EnumAudioEndpoints(0 /* rendu */, 1 /* actifs */, out devices));
+            int count;
+            devices.GetCount(out count);
+            var outputs = new List<AudioOutput>();
+            for (int i = 0; i < count; i++) {
+                IMMDevice device;
+                if (devices.Item(i, out device) != 0) continue;
+                string id;
+                device.GetId(out id);
+                outputs.Add(new AudioOutput { Id = id, Name = FriendlyName(device) ?? id, IsDefault = id == defaultId });
+            }
+            return outputs;
+        }
+
+        // Rôles 0 et 1 : console et multimédia, comme le menu son de Windows. Le rôle 2
+        // (communications) ne bouge pas : les appels restent sur le casque choisi.
+        public static void SetOutput(string id) {
+            var policy = (IPolicyConfig)new PolicyConfigClient();
+            for (int role = 0; role < 2; role++) Marshal.ThrowExceptionForHR(policy.SetDefaultEndpoint(id, role));
         }
 
         static T Activate<T>(string iid) {
@@ -223,12 +319,18 @@ function Send-AudioCommand([string]$line) {
         'mute'    { [DivaAudio.Mixer]::SetMuted($value -eq '1') }
         'app'     { [DivaAudio.Mixer]::SetApp($id, [int]$value) }
         'appmute' { [DivaAudio.Mixer]::SetAppMuted($id, $value -eq '1') }
+        'output'  {
+            [DivaAudio.Mixer]::SetOutput($value)
+            $script:outputs = $null
+        }
     }
 }
 
 $stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput())
 $pendingLine = $stdin.ReadLineAsync()
 $lastJson = ''
+$outputs = $null
+$tick = 0
 
 while ($true) {
     while ($pendingLine.IsCompleted) {
@@ -246,11 +348,19 @@ while ($true) {
             ForEach-Object {
                 [ordered]@{ id = $_.Id; name = $_.Name; path = $_.Path; volume = $_.Volume; muted = $_.Muted; active = $_.Active }
             }
+        # Les sorties changent rarement : relues toutes les 2 s (ou tout de suite après un changement).
+        if ($null -eq $outputs -or $tick % 7 -eq 0) {
+            $outputs = @([DivaAudio.Mixer]::GetOutputs() | ForEach-Object {
+                [ordered]@{ id = $_.Id; name = $_.Name; isDefault = $_.IsDefault }
+            })
+        }
+        $tick++
         $state = [ordered]@{
-            type   = 'audio'
-            master = [DivaAudio.Mixer]::GetMaster()
-            muted  = [DivaAudio.Mixer]::GetMuted()
-            apps   = @($apps)
+            type    = 'audio'
+            master  = [DivaAudio.Mixer]::GetMaster()
+            muted   = [DivaAudio.Mixer]::GetMuted()
+            apps    = @($apps)
+            outputs = $outputs
         }
         $json = ConvertTo-Json -InputObject $state -Compress -Depth 4
         if ($json -ne $lastJson) {

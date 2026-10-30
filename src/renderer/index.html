@@ -26,11 +26,15 @@
     <div id="view-main" class="view">
       <section id="media" class="media idle">
         <div id="media-backdrop" class="media-backdrop"></div>
+        <canvas id="visualizer" class="visualizer"></canvas>
         <img id="cover" class="cover" alt="">
         <div class="track">
           <div id="title" class="title">Rien en lecture</div>
           <div id="artist" class="artist">Lance ta musique</div>
         </div>
+        <button id="like" class="icon-button like" title="Ajouter aux titres likés" hidden>
+          <svg viewBox="0 0 24 24"><path d="M12 20s-7.5-4.6-9.2-9.2C1.6 7.4 3.8 4.5 7 4.5c2 0 3.8 1.1 5 3 1.2-1.9 3-3 5-3 3.2 0 5.4 2.9 4.2 6.3C19.5 15.4 12 20 12 20z"/></svg>
+        </button>
         <div id="progress" class="progress" hidden>
           <span id="position" class="time">0:00</span>
           <input id="seek" class="slider" type="range" min="0" max="1000" value="0" step="1">
@@ -63,6 +67,7 @@
             <svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
           </button>
         </div>
+        <div id="outputs" class="segmented outputs" hidden></div>
         <div id="mixer" class="mixer" hidden>
           <div id="mixer-list"></div>
           <p id="mixer-empty" class="empty" hidden>Aucune app ne joue de son.</p>
@@ -131,6 +136,12 @@
       <div id="hidden-list" class="list"></div>
       <p id="hidden-empty" class="empty" hidden>Aucune. Clic droit sur une app pour la masquer.</p>
 
+      <h2>Spotify</h2>
+      <div class="row">
+        <span id="spotify-state">Non connecté</span>
+        <button id="spotify-action" class="pill-button">Connecter</button>
+      </div>
+
       <h2>Fenêtre</h2>
       <label class="row">
         <span>Toujours au premier plan</span>
@@ -153,6 +164,10 @@
         </div>
       </div>
       <p class="setting-hint">Ou tire un coin du bas du widget pour une taille sur mesure.</p>
+      <label class="row">
+        <span>Visualiseur dans la carte musique</span>
+        <input id="visualizer-toggle" type="checkbox" class="switch">
+      </label>
       <div class="row">
         <span>Opacité au repos</span>
         <div class="opacity-control">
@@ -160,6 +175,29 @@
           <span id="idle-opacity-value" class="volume-value">100</span>
         </div>
       </div>
+    </div>
+
+    <!-- Connexion Spotify, pour le ❤ -->
+    <div id="view-spotify" class="view" hidden>
+      <div class="view-header">
+        <button class="icon-button" data-back="settings" title="Retour">
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span>Connecter Spotify</span>
+      </div>
+      <form id="spotify-form" class="form" autocomplete="off">
+        <p class="setting-text">Pour liker depuis Diva, Spotify demande une app gratuite à ton nom. Il faut un compte <strong>Premium</strong>.</p>
+        <p class="setting-text">1. Crée une app sur le tableau de bord, en cochant « Web API ».</p>
+        <button type="button" id="spotify-dashboard" class="text-button">Ouvrir le tableau de bord…</button>
+        <p class="setting-text">2. Mets exactement cette adresse dans « Redirect URIs » :</p>
+        <button type="button" id="spotify-redirect" class="copy-line" title="Copier"></button>
+        <label class="field">
+          <span>3. Colle le Client ID de ton app</span>
+          <input id="spotify-client-id" class="search" spellcheck="false">
+        </label>
+        <p id="spotify-error" class="form-error" hidden></p>
+        <button type="submit" class="primary-button">Connecter</button>
+      </form>
     </div>
 
     <!-- Ajout d'un lien : site web ou dossier -->

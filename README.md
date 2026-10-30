@@ -2,8 +2,8 @@
 
 Widget companion pour Windows : contrôle de la musique, volume et lanceur d'apps.
 
-- **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau).
-- **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son.
+- **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau), visualiseur calé sur le son du PC, ❤ pour liker sur Spotify.
+- **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son. Sortie audio changeable d'un clic (casque, écran...).
 - **Recherche** : taper n'importe quelle lettre sur le widget (ou la loupe) cherche dans les apps installées, épinglées, récentes et les liens ; fait aussi les calculs (`12*4`, `200*15%`, Entrée copie le résultat) et propose une recherche web. ↑ ↓ Entrée, Échap.
 - **Apps et liens** : apps épinglées, sites et dossiers favoris, et les apps les plus lancées (voir plus bas).
 - **Fenêtre** : toujours au premier plan, se cacher quand on clique ailleurs, aimantation aux bords de l'écran, opacité au repos (pleine au survol).
@@ -40,7 +40,7 @@ Clic droit sur l'icône → **Modifier la config**. Le fichier (`%APPDATA%\Diva\
 ```json
 {
   "hotkey": "Ctrl+Alt+D",
-  "window": { "alwaysOnTop": true, "hideOnBlur": false, "snapToEdges": true, "idleOpacity": 100, "scale": 1 },
+  "window": { "alwaysOnTop": true, "hideOnBlur": false, "snapToEdges": true, "idleOpacity": 100, "scale": 1, "visualizer": true },
   "apps": [
     { "name": "Spotify", "open": "spotify:", "icon": "🎵" }
   ]
@@ -78,12 +78,23 @@ Windows ne compte que les lancements depuis le menu Démarrer, la barre des tâc
 
 La config par défaut est dans [src/default-config.json](src/default-config.json).
 
+### Spotify (❤)
+
+Réglages → Spotify → Connecter, puis suivre les 3 étapes. Il faut une app gratuite sur [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), avec un compte **Premium** (obligatoire pour les apps en mode développement) et la Redirect URI `http://127.0.0.1:43117/callback`.
+
+Le jeton est chiffré dans `%APPDATA%\Diva\spotify.token`. Spotify impose de se reconnecter tous les 6 mois.
+
+### Visualiseur
+
+Il analyse le son qui sort du PC (toutes les apps, pas seulement Spotify). Le son n'est ni enregistré ni envoyé, et la capture s'arrête quand la musique est en pause ou le widget caché. Il se désactive dans Réglages → Fenêtre.
+
 ## Structure
 
 ```
 src/
 ├── main.js            # fenêtre, barre des tâches, raccourci, config, lancement d'apps
 ├── preload.js         # fonctions exposées à l'interface
+├── spotify.js         # connexion Spotify et ❤
 ├── default-config.json
 └── renderer/          # l'interface du widget (HTML/CSS/JS)
 helpers/

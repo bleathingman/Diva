@@ -1,7 +1,8 @@
 {
   "hotkey": "Ctrl+Alt+D",
-  "window": { "alwaysOnTop": true, "hideOnBlur": false, "snapToEdges": true, "idleOpacity": 100, "scale": 1 },
+  "window": { "alwaysOnTop": true, "hideOnBlur": false, "snapToEdges": true, "idleOpacity": 100, "scale": 1, "visualizer": true },
   "grid": { "count": 8, "fillWithRecent": true, "recentDays": 30, "pinned": [], "hidden": [] },
+  "spotify": { "clientId": "" },
   "apps": [
     { "name": "Spotify", "open": "spotify:", "icon": "🎵" }
   ]
