@@ -4,6 +4,8 @@ Widget companion pour Windows : contrôle de la musique, volume et lanceur d'app
 
 - **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau), visualiseur calé sur le son du PC, ❤ pour liker sur Spotify.
 - **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son. Sortie audio changeable d'un clic (casque, écran...).
+- **Captures d'écran** : les 3 dernières captures (outil Capture d'écran et Game Bar) ; les glisser dans Discord ou ailleurs envoie le fichier, clic pour ouvrir, clic droit pour copier l'image.
+- **Minuteur** : bouton ⏱ dans la barre du haut ; durées toutes faites, durée libre ou Pomodoro (25 min de travail, 5 min de pause, grande pause tous les 4 cycles). Le temps restant reste affiché en haut, notification Windows à la fin.
 - **Recherche** : taper n'importe quelle lettre sur le widget (ou la loupe) cherche dans les apps installées, épinglées, récentes et les liens ; fait aussi les calculs (`12*4`, `200*15%`, Entrée copie le résultat) et propose une recherche web. ↑ ↓ Entrée, Échap.
 - **Apps et liens** : apps épinglées, sites et dossiers favoris, et les apps les plus lancées (voir plus bas).
 - **Fenêtre** : toujours au premier plan, se cacher quand on clique ailleurs, aimantation aux bords de l'écran, opacité au repos (pleine au survol).
@@ -84,6 +86,16 @@ Réglages → Spotify → Connecter, puis suivre les 3 étapes. Il faut une app 
 
 Le jeton est chiffré dans `%APPDATA%\Diva\spotify.token`. Spotify impose de se reconnecter tous les 6 mois.
 
+### Minuteur et captures
+
+Durées du Pomodoro dans la config :
+
+```json
+"timer": { "work": 25, "shortBreak": 5, "longBreak": 15, "cyclesBeforeLong": 4 }
+```
+
+Les captures viennent du dossier « Captures d'écran » de Windows (suivi s'il est dans OneDrive) et de `Vidéos\Captures`. Elles se masquent dans Réglages → Captures.
+
 ### Visualiseur
 
 Il analyse le son qui sort du PC (toutes les apps, pas seulement Spotify). Le son n'est ni enregistré ni envoyé, et la capture s'arrête quand la musique est en pause ou le widget caché. Il se désactive dans Réglages → Fenêtre.
@@ -95,6 +107,8 @@ src/
 ├── main.js            # fenêtre, barre des tâches, raccourci, config, lancement d'apps
 ├── preload.js         # fonctions exposées à l'interface
 ├── spotify.js         # connexion Spotify et ❤
+├── captures.js        # captures d'écran récentes
+├── timer.js           # minuteur et Pomodoro
 ├── default-config.json
 └── renderer/          # l'interface du widget (HTML/CSS/JS)
 helpers/

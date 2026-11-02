@@ -979,6 +979,163 @@ h2 {
   cursor: default;
 }
 
+/* --- Captures --- */
+
+.captures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.capture {
+  position: relative;
+  aspect-ratio: 16 / 10;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  cursor: grab;
+  transition: border-color 0.2s var(--ease), transform 0.15s var(--ease);
+}
+
+.capture:hover {
+  border-color: var(--border-strong);
+}
+
+.capture:active {
+  transform: scale(0.97);
+}
+
+.capture img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(0.6);
+  opacity: 0.85;
+  transition: filter 0.25s var(--ease), opacity 0.25s var(--ease);
+}
+
+.capture img:not([src]) {
+  visibility: hidden;
+}
+
+.capture:hover img {
+  filter: none;
+  opacity: 1;
+}
+
+.capture.fresh::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--white);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+/* --- Minuteur --- */
+
+/* Inactif : simple icône ; en cours : pastille avec le temps restant. */
+.timer-chip span:empty {
+  display: none;
+}
+
+.timer-chip.running {
+  display: flex;
+  align-items: center;
+  width: auto;
+  gap: 5px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
+  background: var(--surface-active);
+  color: var(--text);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-chip.paused {
+  opacity: 0.6;
+}
+
+.timer-display {
+  margin: 14px 0 16px;
+  text-align: center;
+}
+
+.timer-time {
+  font-family: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  font-size: 44px;
+  font-weight: 300;
+  letter-spacing: 1px;
+  font-variant-numeric: tabular-nums;
+}
+
+.timer-label {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.timer-bar {
+  height: 3px;
+  margin: 14px 12px 0;
+  border-radius: 2px;
+  background: var(--surface-active);
+  overflow: hidden;
+}
+
+.timer-fill {
+  width: 0;
+  height: 100%;
+  background: #b4b4ba;
+  transition: width 0.25s linear;
+}
+
+.timer-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+}
+
+.timer-presets {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.timer-presets button {
+  padding: 9px 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  transition: background 0.2s var(--ease), border-color 0.2s var(--ease);
+}
+
+.timer-presets button:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+}
+
+.timer-custom {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.timer-custom .search {
+  margin: 0;
+}
+
+.timer-custom input::-webkit-inner-spin-button {
+  appearance: none;
+}
+
 /* --- Formulaire d'ajout de lien --- */
 
 .form {

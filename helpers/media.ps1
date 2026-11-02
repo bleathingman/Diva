@@ -106,7 +106,9 @@ while ($true) {
 
     # La pochette (~100 Ko) part dans son propre message, seulement quand le morceau change.
     if ($trackKey -ne $lastTrackKey) {
-        Write-Message @{ type = 'thumbnail'; data = $(if ($trackKey) { Get-Thumbnail $props }) }
+        # Sans morceau : $null explicite (un $() vide deviendrait un objet {} en JSON).
+        $data = if ($trackKey) { Get-Thumbnail $props } else { $null }
+        Write-Message @{ type = 'thumbnail'; data = $data }
         $lastTrackKey = $trackKey
     }
 

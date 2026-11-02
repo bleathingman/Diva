@@ -11,6 +11,10 @@
     <header class="titlebar">
       <span class="brand"><span class="dot"></span>Diva</span>
       <span id="clock" class="clock"></span>
+      <button id="timer-chip" class="icon-button timer-chip" title="Minuteur">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>
+        <span id="timer-chip-text"></span>
+      </button>
       <button id="open-search" class="icon-button" title="Rechercher (ou tape directement)">
         <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg>
       </button>
@@ -74,11 +78,53 @@
         </div>
       </section>
 
+      <section id="captures-section" hidden>
+        <h2>Captures</h2>
+        <div id="captures" class="captures"></div>
+      </section>
+
       <section>
         <h2 id="apps-title">Apps</h2>
         <div id="apps" class="apps"></div>
         <p id="apps-empty" class="empty" hidden>Aucune app. Ajoute-en depuis les réglages.</p>
       </section>
+    </div>
+
+    <!-- Minuteur et Pomodoro -->
+    <div id="view-timer" class="view" hidden>
+      <div class="view-header">
+        <button class="icon-button" data-back title="Retour">
+          <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+        </button>
+        <span>Minuteur</span>
+      </div>
+      <div class="timer-display">
+        <div id="timer-time" class="timer-time">0:00</div>
+        <div id="timer-label" class="timer-label">Choisis une durée</div>
+        <div class="timer-bar"><div id="timer-fill" class="timer-fill"></div></div>
+      </div>
+      <div id="timer-running" class="timer-actions" hidden>
+        <button id="timer-toggle" class="pill-button">Pause</button>
+        <button id="timer-skip" class="pill-button">Passer</button>
+        <button id="timer-stop" class="pill-button">Arrêter</button>
+      </div>
+      <div id="timer-idle">
+        <div class="timer-presets">
+          <button data-minutes="5">5 min</button>
+          <button data-minutes="10">10 min</button>
+          <button data-minutes="15">15 min</button>
+          <button data-minutes="30">30 min</button>
+          <button data-minutes="60">1 h</button>
+        </div>
+        <form id="timer-custom" class="timer-custom" autocomplete="off">
+          <input id="timer-minutes" class="search" type="number" min="1" max="600" placeholder="Autre durée (minutes)">
+          <button type="submit" class="pill-button">Démarrer</button>
+        </form>
+        <button id="timer-pomodoro" class="wide-button">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="13" r="7.5"/><path d="M12 9v4l2.5 2.5M9.5 2.5h5"/></svg>
+          <span id="timer-pomodoro-text">Pomodoro</span>
+        </button>
+      </div>
     </div>
 
     <!-- Recherche : apps, liens, calculs, web -->
@@ -135,6 +181,13 @@
       <h2>Masquées</h2>
       <div id="hidden-list" class="list"></div>
       <p id="hidden-empty" class="empty" hidden>Aucune. Clic droit sur une app pour la masquer.</p>
+
+      <h2>Captures</h2>
+      <label class="row">
+        <span>Afficher les captures récentes</span>
+        <input id="captures-toggle" type="checkbox" class="switch">
+      </label>
+      <p id="captures-folders" class="setting-hint"></p>
 
       <h2>Spotify</h2>
       <div class="row">

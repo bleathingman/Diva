@@ -1,10 +1,15 @@
-const { app, BrowserWindow, Tray, Menu, desktopCapturer, dialog, globalShortcut, ipcMain, net, session, shell, screen, nativeImage } = require('electron');
+const {
+  app, BrowserWindow, Tray, Menu, Notification, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, net,
+  session, shell, screen, nativeImage,
+} = require('electron');
 const { spawn, execFile } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const { createSpotify, REDIRECT_URI } = require('./spotify');
+const { createCaptures } = require('./captures');
+const { createTimer } = require('./timer');
 
 const WIDTH = 300; // largeur à l'échelle 1 ; l'interface est toujours dessinée sur cette base
 const MIN_SCALE = 0.75;
@@ -38,6 +43,8 @@ let currentScale = 1;
 let contentHeight = 400; // hauteur du widget en pixels d'interface, avant mise à l'échelle
 let resizeDrag = null;
 let spotify = null;
+let captures = null;
+let timer = null;
 let blurGuard = false; // vrai pendant un menu ou une boîte de dialogue : la perte de focus est normale
 let hiddenByBlurAt = 0;
 
@@ -178,6 +185,8 @@ const SECTION_KEYS = {
   grid: ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'],
   window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity', 'scale', 'visualizer'],
   spotify: ['clientId'],
+  captures: ['enabled'],
+  timer: ['work', 'shortBreak', 'longBreak', 'cyclesBeforeLong'],
 };
 
 function gridSettings() {
@@ -197,11 +206,21 @@ function spotifySettings() {
   return { clientId: '', ...config?.spotify };
 }
 
+function capturesSettings() {
+  return { enabled: true, ...config?.captures };
+}
+
+function timerSettings() {
+  return { work: 25, shortBreak: 5, longBreak: 15, cyclesBeforeLong: 4, ...config?.timer };
+}
+
 function updateSection(section, patch) {
   const keys = SECTION_KEYS[section];
   if (!keys) return;
   const allowed = Object.fromEntries(Object.entries(patch).filter(([key]) => keys.includes(key)));
-  const current = { grid: gridSettings, window: windowSettings, spotify: spotifySettings }[section]();
+  const current = {
+    grid: gridSettings, window: windowSettings, spotify: spotifySettings, captures: capturesSettings, timer: timerSettings,
+  }[section]();
   config = { ...config, [section]: { ...current, ...allowed } };
   saveConfig();
   if (section === 'window') applyWindowSettings();
@@ -235,6 +254,7 @@ function withCurrentIcon(entry) {
 function sendGrid() {
   win?.webContents.send('grid', buildGrid());
   win?.webContents.send('window-settings', windowSettings());
+  win?.webContents.send('captures', capturesPayload());
 }
 
 // Compare une app (objet ou simple nom) à un nom, avec la même règle que normalize().
@@ -417,6 +437,7 @@ function refreshRecentApps() {
 function getInstalledApps() {
   installedApps ??= runAppScript(INSTALLED_APPS_PATH).then((apps) => {
     installedList = apps;
+    sendGrid(); // un logo d'app épinglée a pu être retrouvé dans cette liste
     return apps;
   }).catch((error) => {
     console.error('[installed-apps]', error.message);
@@ -503,6 +524,39 @@ async function connectSpotify(clientId) {
   } catch (error) {
     return { ...spotifyStatus(), error: error.message };
   }
+}
+
+// --- Captures d'écran (src/captures.js) ----------------------------------------------
+
+function capturesPayload() {
+  return { enabled: capturesSettings().enabled, items: captures?.list() ?? [], folders: captures?.folders() ?? [] };
+}
+
+// Glisser une miniature hors du widget dépose le vrai fichier (dans Discord, l'Explorateur...).
+async function dragCapture(sender, file) {
+  if (!captures.find(file)) return;
+  const thumbnail = await captures.thumbnail(file);
+  const icon = thumbnail ? nativeImage.createFromDataURL(thumbnail).resize({ width: 96 }) : nativeImage.createFromPath(ICON_PATH);
+  sender.startDrag({ file, icon });
+}
+
+function showCaptureMenu(file) {
+  if (!captures.find(file)) return;
+  blurGuard = true;
+  Menu.buildFromTemplate([
+    { label: 'Copier l\'image', click: () => clipboard.writeImage(nativeImage.createFromPath(file)) },
+    { label: 'Ouvrir', click: () => shell.openPath(file) },
+    { label: 'Afficher dans le dossier', click: () => shell.showItemInFolder(file) },
+  ]).popup({ window: win, callback: () => { blurGuard = false; } });
+}
+
+// --- Minuteur (src/timer.js) ---------------------------------------------------------
+
+// Fin d'un minuteur : notification Windows, et le widget se montre sans voler le focus.
+function timerFinished(title, body) {
+  new Notification({ title, body, icon: ICON_PATH }).show();
+  if (!win.isVisible()) win.showInactive();
+  win.webContents.send('timer-done', { title, body });
 }
 
 // --- Son du système pour le visualiseur ---------------------------------------------
@@ -741,6 +795,20 @@ ipcMain.handle('get-window-settings', () => windowSettings());
 ipcMain.handle('add-link', (_event, link) => addLink(link));
 ipcMain.handle('pick-folder', () => pickFolder());
 ipcMain.handle('pick-app', () => pickApp());
+ipcMain.handle('get-captures', () => capturesPayload());
+ipcMain.handle('capture-thumbnail', (_event, file) => captures.thumbnail(String(file)));
+ipcMain.on('capture-drag', (event, file) => dragCapture(event.sender, String(file)));
+ipcMain.on('capture-open', (_event, file) => captures.find(String(file)) && shell.openPath(String(file)));
+ipcMain.on('capture-menu', (_event, file) => showCaptureMenu(String(file)));
+ipcMain.on('update-captures', (_event, patch) => updateSection('captures', patch));
+ipcMain.handle('get-timer', () => ({ ...timer.state(), settings: timerSettings() }));
+ipcMain.on('timer', (_event, action, minutes) => {
+  const actions = {
+    start: () => timer.startSimple(minutes), pomodoro: timer.startPomodoro,
+    pause: timer.pause, resume: timer.resume, skip: timer.skip, stop: timer.stop,
+  };
+  actions[action]?.();
+});
 ipcMain.handle('spotify-status', () => spotifyStatus());
 ipcMain.handle('spotify-connect', (_event, clientId) => connectSpotify(clientId));
 ipcMain.handle('spotify-disconnect', () => {
@@ -788,7 +856,16 @@ if (!app.requestSingleInstanceLock()) {
     config = loadConfig();
     spotify = createSpotify({ tokenFile: userFile('spotify.token'), getClientId: () => spotifySettings().clientId });
     allowSystemAudioCapture();
+    // Les notifications Windows s'affichent au nom de l'app installée (raccourci du menu Démarrer).
+    if (app.isPackaged) app.setAppUserModelId('com.bleathingman.diva');
+    captures = createCaptures({ onChange: () => win?.webContents.send('captures', capturesPayload()) });
+    timer = createTimer({
+      getSettings: timerSettings,
+      onChange: (state) => win?.webContents.send('timer', { ...state, settings: timerSettings() }),
+      onFinish: timerFinished,
+    });
     createWindow();
+    captures.start();
     createTray();
     registerHotkey();
     watchConfig();

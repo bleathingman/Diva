@@ -321,7 +321,7 @@ const SETTINGS_VIEWS = ['settings', 'picker', 'link', 'spotify'];
 
 function showView(name) {
   currentView = name;
-  for (const view of ['main', 'search', 'settings', 'picker', 'link', 'spotify']) {
+  for (const view of ['main', 'search', 'timer', 'settings', 'picker', 'link', 'spotify']) {
     $(`#view-${view}`).hidden = view !== name;
   }
   $('#toggle-settings').classList.toggle('active', SETTINGS_VIEWS.includes(name));
@@ -331,6 +331,7 @@ function showView(name) {
   if (name === 'spotify') openSpotifyForm();
   if (name === 'search') openSearch();
   $('#open-search').classList.toggle('active', name === 'search');
+  $('#timer-chip').classList.toggle('active', name === 'timer');
 }
 
 function actionButton(icon, title, onClick) {
@@ -676,6 +677,136 @@ function drawVisualizer() {
 
 document.addEventListener('visibilitychange', updateVisualizer);
 
+// --- Captures d'écran ---
+
+const timeAgo = (time) => {
+  const minutes = Math.round((Date.now() - time) / 60_000);
+  if (minutes < 1) return 'à l\'instant';
+  if (minutes < 60) return `il y a ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `il y a ${hours} h`;
+  return new Date(time).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+};
+
+let capturesKey = '';
+
+async function renderCaptures({ enabled, items, folders }) {
+  $('#captures-toggle').checked = enabled;
+  $('#captures-folders').textContent = folders.length
+    ? `Dossiers surveillés : ${folders.join(' · ')}`
+    : 'Aucun dossier de captures trouvé.';
+  $('#captures-section').hidden = !enabled || items.length === 0;
+
+  const key = items.map((item) => `${item.path}|${item.time}`).join('/');
+  if (key === capturesKey) return;
+  capturesKey = key;
+  const container = $('#captures');
+  container.replaceChildren();
+  for (const item of items) {
+    const tile = document.createElement('div');
+    tile.className = 'capture';
+    tile.draggable = true;
+    tile.title = `${item.name}\n${timeAgo(item.time)}\nGlisser vers Discord · clic pour ouvrir · clic droit pour copier`;
+    // Récente (moins de 10 min) : un point, comme pour les apps épinglées.
+    tile.classList.toggle('fresh', Date.now() - item.time < 10 * 60_000);
+    const image = document.createElement('img');
+    image.alt = '';
+    tile.append(image);
+    tile.addEventListener('dragstart', (event) => {
+      event.preventDefault();
+      window.diva.dragCapture(item.path);
+    });
+    tile.addEventListener('click', () => window.diva.openCapture(item.path));
+    tile.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      window.diva.captureMenu(item.path);
+    });
+    container.append(tile);
+    window.diva.captureThumbnail(item.path).then((dataUrl) => {
+      if (dataUrl) image.src = dataUrl;
+    });
+  }
+}
+
+$('#captures-toggle').addEventListener('change', (event) => window.diva.updateCaptures({ enabled: event.target.checked }));
+
+// --- Minuteur ---
+
+let timerState = { status: 'idle', settings: { work: 25, shortBreak: 5 } };
+
+const timerRemaining = () => (timerState.status === 'running'
+  ? Math.max(0, timerState.endsAt - Date.now())
+  : timerState.remaining ?? 0);
+
+// Arrondi au-dessus : on n'affiche 0:00 qu'à la toute fin.
+const formatCountdown = (ms) => {
+  const total = Math.ceil(ms / 1000);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, '0');
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`;
+};
+
+function renderTimer() {
+  const active = timerState.status !== 'idle';
+  const remaining = timerRemaining();
+
+  const chip = $('#timer-chip');
+  chip.classList.toggle('running', active);
+  chip.classList.toggle('paused', timerState.status === 'paused');
+  $('#timer-chip-text').textContent = active ? formatCountdown(remaining) : '';
+
+  $('#timer-running').hidden = !active;
+  $('#timer-idle').hidden = active;
+  $('#timer-skip').hidden = timerState.mode !== 'pomodoro';
+  $('#timer-toggle').textContent = timerState.status === 'paused' ? 'Reprendre' : 'Pause';
+  $('#timer-time').textContent = active ? formatCountdown(remaining) : '0:00';
+  $('#timer-label').textContent = active
+    ? `${timerState.label}${timerState.status === 'paused' ? ' · en pause' : ''}`
+    : 'Choisis une durée';
+  $('#timer-fill').style.width = active ? `${(1 - remaining / timerState.duration) * 100}%` : '0%';
+  const { work, shortBreak } = timerState.settings;
+  $('#timer-pomodoro-text').textContent = `Pomodoro · ${work} min / ${shortBreak} min de pause`;
+}
+
+function updateTimer(state) {
+  timerState = state;
+  renderTimer();
+}
+
+// Petit carillon doux en plus de la notification Windows.
+function chime() {
+  const context = new AudioContext();
+  [660, 880].forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const start = context.currentTime + index * 0.18;
+    oscillator.frequency.value = frequency;
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(0.12, start + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.6);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start(start);
+    oscillator.stop(start + 0.65);
+  });
+  setTimeout(() => context.close(), 1200);
+}
+
+$('#timer-chip').addEventListener('click', () => showView(currentView === 'timer' ? 'main' : 'timer'));
+for (const button of document.querySelectorAll('[data-minutes]')) {
+  button.addEventListener('click', () => window.diva.timer('start', Number(button.dataset.minutes)));
+}
+$('#timer-custom').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const minutes = Number($('#timer-minutes').value);
+  if (minutes > 0) window.diva.timer('start', minutes);
+  $('#timer-minutes').value = '';
+});
+$('#timer-pomodoro').addEventListener('click', () => window.diva.timer('pomodoro'));
+$('#timer-toggle').addEventListener('click', () => window.diva.timer(timerState.status === 'paused' ? 'resume' : 'pause'));
+$('#timer-skip').addEventListener('click', () => window.diva.timer('skip'));
+$('#timer-stop').addEventListener('click', () => window.diva.timer('stop'));
+
 // --- Recherche ---
 
 const MAX_RESULTS = 7;
@@ -965,7 +1096,7 @@ document.addEventListener('keydown', (event) => {
   }
   if (event.key !== 'Escape') return;
   if (['picker', 'link', 'spotify'].includes(currentView)) showView('settings');
-  else if (currentView === 'settings' || currentView === 'search') showView('main');
+  else if (['settings', 'search', 'timer'].includes(currentView)) showView('main');
 });
 
 $('#open-spotify').addEventListener('click', () => window.diva.launchApp('Spotify'));
@@ -988,6 +1119,15 @@ window.diva.getGrid().then(renderGrid);
 window.diva.onWindowSettings(renderWindowSettings);
 window.diva.getWindowSettings().then(renderWindowSettings);
 window.diva.spotifyStatus().then(renderSpotifyStatus);
+window.diva.onCaptures(renderCaptures);
+window.diva.getCaptures().then(renderCaptures);
+window.diva.onTimer(updateTimer);
+window.diva.getTimer().then(updateTimer);
+window.diva.onTimerDone(({ title, body }) => {
+  chime();
+  toast(`${title} · ${body}`);
+});
+setInterval(renderTimer, 250);
 
 // Opacité au repos : le processus principal repasse à 100 % tant que la souris est dessus.
 document.documentElement.addEventListener('mouseenter', () => window.diva.hover(true));
