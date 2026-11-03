@@ -9,6 +9,9 @@ Widget companion pour Windows : contrôle de la musique, volume et lanceur d'app
 - **Recherche** : taper n'importe quelle lettre sur le widget (ou la loupe) cherche dans les apps installées, épinglées, récentes et les liens ; fait aussi les calculs (`12*4`, `200*15%`, Entrée copie le résultat) et propose une recherche web. ↑ ↓ Entrée, Échap.
 - **Apps et liens** : apps épinglées, sites et dossiers favoris, et les apps les plus lancées (voir plus bas).
 - **Fenêtre** : toujours au premier plan, se cacher quand on clique ailleurs, aimantation aux bords de l'écran, opacité au repos (pleine au survol).
+- **Disposition** : ordre des sections, sections masquées, et sections détachées dans leur propre widget (Réglages → Disposition ; le × d'un widget détaché le rattache).
+- **Thème** : sombre, clair, ou automatique (suit Windows).
+- **Mises à jour automatiques** depuis les releases GitHub.
 - **Taille** : Petit / Moyen / Grand dans les réglages, ou sur mesure en tirant un coin du bas du widget (de 75 % à 160 %). Tout est mis à l'échelle, la mise en page reste la même.
 
 ## Installer
@@ -21,6 +24,16 @@ npm run dist
 Puis lancer `dist\Diva-Setup-<version>.exe` : Diva s'installe pour l'utilisateur (sans droits admin) dans `%LOCALAPPDATA%\Programs\Diva`, avec un raccourci dans le menu Démarrer. Pour une mise à jour, augmenter `version` dans `package.json`, refaire `npm run dist` et relancer l'installeur.
 
 L'exe n'est pas signé : au premier lancement, Windows SmartScreen peut afficher « Windows a protégé votre ordinateur » → **Informations complémentaires** → **Exécuter quand même**.
+
+## Publier une nouvelle version
+
+Diva installé vérifie la dernière release de [github.com/bleathingman/Diva](https://github.com/bleathingman/Diva/releases) au démarrage puis toutes les 6 h, la télécharge en arrière-plan et l'installe au redémarrage (bandeau « Redémarrer » ou menu de l'icône).
+
+1. Augmenter `version` dans `package.json` (ex. `0.4.0` → `0.5.0`), commit, push.
+2. `npm run dist`.
+3. Sur GitHub → **Releases** → **Draft a new release** : tag `v0.5.0`, et joindre les 3 fichiers de `dist/` : `Diva-Setup-0.5.0.exe`, `Diva-Setup-0.5.0.exe.blockmap`, `latest.yml`. **Publish release** (pas en brouillon ni en pré-version).
+
+Variante en une commande : créer un jeton GitHub (fine-grained, accès « Contents : Read and write » sur le dépôt Diva), puis `$env:GH_TOKEN="..."; npm run release`.
 
 ## Développer
 

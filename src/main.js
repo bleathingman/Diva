@@ -1,5 +1,5 @@
 const {
-  app, BrowserWindow, Tray, Menu, Notification, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, net,
+  app, BrowserWindow, Tray, Menu, Notification, clipboard, nativeTheme, desktopCapturer, dialog, globalShortcut, ipcMain, net,
   session, shell, screen, nativeImage,
 } = require('electron');
 const { spawn, execFile } = require('child_process');
@@ -10,6 +10,7 @@ const readline = require('readline');
 const { createSpotify, REDIRECT_URI } = require('./spotify');
 const { createCaptures } = require('./captures');
 const { createTimer } = require('./timer');
+const { autoUpdater } = require('electron-updater');
 
 const WIDTH = 300; // largeur à l'échelle 1 ; l'interface est toujours dessinée sur cette base
 const MIN_SCALE = 0.75;
@@ -26,6 +27,7 @@ const AUDIO_HELPER_PATH = path.join(HELPERS_DIR, 'audio.ps1');
 const RECENT_APPS_PATH = path.join(HELPERS_DIR, 'recent-apps.ps1');
 const INSTALLED_APPS_PATH = path.join(HELPERS_DIR, 'installed-apps.ps1');
 const RECENT_REFRESH_MS = 10 * 60 * 1000;
+const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
 
 let win = null;
 let tray = null;
@@ -38,15 +40,15 @@ let installedApps = null; // promesse gardée en cache, la liste change rarement
 let installedList = [];
 let lastSavedConfig = '';
 let quitting = false;
-let hovered = false;
 let currentScale = 1;
-let contentHeight = 400; // hauteur du widget en pixels d'interface, avant mise à l'échelle
 let resizeDrag = null;
+const detachedWindows = new Map(); // section détachée -> sa fenêtre
 let spotify = null;
 let captures = null;
 let timer = null;
 let blurGuard = false; // vrai pendant un menu ou une boîte de dialogue : la perte de focus est normale
 let hiddenByBlurAt = 0;
+let updateReady = null; // version téléchargée, installée au prochain redémarrage
 
 // --- Fichiers utilisateur (%APPDATA%\Diva) -------------------------------------------
 
@@ -183,11 +185,14 @@ async function getAppIcon({ open, iconFile } = {}) {
 
 const SECTION_KEYS = {
   grid: ['count', 'fillWithRecent', 'recentDays', 'pinned', 'hidden'],
-  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity', 'scale', 'visualizer'],
+  window: ['alwaysOnTop', 'hideOnBlur', 'snapToEdges', 'idleOpacity', 'scale', 'visualizer', 'theme'],
   spotify: ['clientId'],
   captures: ['enabled'],
   timer: ['work', 'shortBreak', 'longBreak', 'cyclesBeforeLong'],
+  layout: ['order', 'hidden', 'detached'],
 };
+
+const SECTIONS = ['media', 'audio', 'captures', 'apps'];
 
 function gridSettings() {
   return { count: 8, fillWithRecent: true, recentDays: 30, pinned: [], hidden: [], ...config?.grid };
@@ -197,7 +202,7 @@ function windowSettings() {
   // alwaysOnTop était à la racine de la config avant le panneau Réglages : on le reprend.
   return {
     alwaysOnTop: config?.alwaysOnTop ?? true, hideOnBlur: false, snapToEdges: true, idleOpacity: 100, scale: 1,
-    visualizer: true,
+    visualizer: true, theme: 'dark',
     ...config?.window,
   };
 }
@@ -210,6 +215,16 @@ function capturesSettings() {
   return { enabled: true, ...config?.captures };
 }
 
+// Ordre, sections masquées et sections détachées dans leur propre widget.
+function layoutSettings() {
+  // Avant la disposition, les captures avaient leur propre interrupteur : on le reprend.
+  const legacyHidden = capturesSettings().enabled === false ? ['captures'] : [];
+  const layout = { order: SECTIONS, hidden: legacyHidden, detached: [], ...config?.layout };
+  const known = (list) => (Array.isArray(list) ? list.filter((section) => SECTIONS.includes(section)) : []);
+  const order = [...new Set([...known(layout.order), ...SECTIONS])];
+  return { order, hidden: known(layout.hidden), detached: known(layout.detached) };
+}
+
 function timerSettings() {
   return { work: 25, shortBreak: 5, longBreak: 15, cyclesBeforeLong: 4, ...config?.timer };
 }
@@ -219,11 +234,13 @@ function updateSection(section, patch) {
   if (!keys) return;
   const allowed = Object.fromEntries(Object.entries(patch).filter(([key]) => keys.includes(key)));
   const current = {
-    grid: gridSettings, window: windowSettings, spotify: spotifySettings, captures: capturesSettings, timer: timerSettings,
+    grid: gridSettings, window: windowSettings, spotify: spotifySettings, captures: capturesSettings,
+    timer: timerSettings, layout: layoutSettings,
   }[section]();
   config = { ...config, [section]: { ...current, ...allowed } };
   saveConfig();
   if (section === 'window') applyWindowSettings();
+  if (section === 'layout') syncDetachedWindows();
 }
 
 const updateGrid = (patch) => updateSection('grid', patch);
@@ -251,10 +268,16 @@ function withCurrentIcon(entry) {
   return { ...entry, iconFile: fresh?.iconFile };
 }
 
+// Tous les widgets reçoivent les mêmes données ; chacun n'affiche que ses sections.
+function broadcast(channel, payload) {
+  for (const window of allWindows()) window.webContents.send(channel, payload);
+}
+
 function sendGrid() {
-  win?.webContents.send('grid', buildGrid());
-  win?.webContents.send('window-settings', windowSettings());
-  win?.webContents.send('captures', capturesPayload());
+  broadcast('grid', buildGrid());
+  broadcast('window-settings', windowSettings());
+  broadcast('layout', layoutSettings());
+  broadcast('captures', capturesPayload());
 }
 
 // Compare une app (objet ou simple nom) à un nom, avec la même règle que normalize().
@@ -395,7 +418,7 @@ function hideApp(name) {
   if (!hidden.some(sameApp(name))) updateGrid({ hidden: [...hidden, name] });
 }
 
-function showAppMenu(name) {
+function showAppMenu(name, window = win) {
   blurGuard = true;
   const pinned = gridSettings().pinned.some(sameApp(name));
   // Pour épingler une récente, on garde son icône de package si elle en a une.
@@ -407,7 +430,7 @@ function showAppMenu(name) {
     { label: 'Masquer de la grille', visible: !pinned, click: () => hideApp(name) },
     { type: 'separator' },
     { label: 'Réglages…', click: () => win.webContents.send('open-settings') },
-  ]).popup({ window: win, callback: () => { blurGuard = false; } });
+  ]).popup({ window, callback: () => { blurGuard = false; } });
 }
 
 function runAppScript(script, args = []) {
@@ -540,14 +563,14 @@ async function dragCapture(sender, file) {
   sender.startDrag({ file, icon });
 }
 
-function showCaptureMenu(file) {
+function showCaptureMenu(file, window = win) {
   if (!captures.find(file)) return;
   blurGuard = true;
   Menu.buildFromTemplate([
     { label: 'Copier l\'image', click: () => clipboard.writeImage(nativeImage.createFromPath(file)) },
     { label: 'Ouvrir', click: () => shell.openPath(file) },
     { label: 'Afficher dans le dossier', click: () => shell.showItemInFolder(file) },
-  ]).popup({ window: win, callback: () => { blurGuard = false; } });
+  ]).popup({ window, callback: () => { blurGuard = false; } });
 }
 
 // --- Minuteur (src/timer.js) ---------------------------------------------------------
@@ -557,6 +580,48 @@ function timerFinished(title, body) {
   new Notification({ title, body, icon: ICON_PATH }).show();
   if (!win.isVisible()) win.showInactive();
   win.webContents.send('timer-done', { title, body });
+}
+
+// --- Mises à jour automatiques (GitHub Releases) -------------------------------------
+
+// L'app installée regarde la dernière release de github.com/bleathingman/Diva : si elle est plus
+// récente, elle la télécharge en arrière-plan puis l'installe au prochain redémarrage de Diva.
+function setupUpdates() {
+  if (!app.isPackaged) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-downloaded', ({ version }) => {
+    updateReady = version;
+    win.webContents.send('update', updateStatus());
+    refreshTrayMenu();
+  });
+  autoUpdater.on('error', (error) => console.error('[mises à jour]', error.message));
+  checkForUpdates();
+  setInterval(checkForUpdates, UPDATE_CHECK_MS);
+}
+
+// Renvoie un message pour les réglages.
+async function checkForUpdates() {
+  if (!app.isPackaged) return 'Pas de mise à jour en mode développement';
+  if (updateReady) return `Version ${updateReady} prête`;
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    const latest = result?.updateInfo?.version;
+    return latest && latest !== app.getVersion() ? `Téléchargement de la ${latest}…` : 'Diva est à jour';
+  } catch (error) {
+    if (/No published versions/i.test(error.message)) return 'Aucune version publiée sur GitHub pour l\'instant';
+    return `Vérification impossible : ${error.message}`;
+  }
+}
+
+function updateStatus() {
+  return { version: app.getVersion(), ready: updateReady };
+}
+
+function installUpdate() {
+  if (!updateReady) return;
+  quitting = true;
+  autoUpdater.quitAndInstall(true, true); // installation silencieuse, puis Diva se relance
 }
 
 // --- Son du système pour le visualiseur ---------------------------------------------
@@ -586,7 +651,7 @@ function startHelper(script, channel) {
     helper.process = child;
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
       try {
-        win?.webContents.send(channel, JSON.parse(line));
+        broadcast(channel, JSON.parse(line));
       } catch {
         // Ligne parasite (avertissement PowerShell...) : on l'ignore.
       }
@@ -608,18 +673,29 @@ function defaultPosition() {
   return { x: workArea.x + workArea.width - WIDTH - SNAP_GAP, y: workArea.y + SNAP_GAP };
 }
 
-function createWindow() {
-  const saved = readJson(userFile('state.json'), {});
-  const visibleOnScreen = saved.x !== undefined &&
-    screen.getAllDisplays().some(({ workArea: a }) =>
-      saved.x >= a.x && saved.x < a.x + a.width && saved.y >= a.y && saved.y < a.y + a.height);
-  const { x, y } = visibleOnScreen ? saved : defaultPosition();
-  currentScale = clampScale(windowSettings().scale);
+const allWindows = () => [win, ...detachedWindows.values()].filter((window) => window && !window.isDestroyed());
+const windowOf = (event) => BrowserWindow.fromWebContents(event.sender);
 
-  win = new BrowserWindow({
+function isOnScreen(position) {
+  return position?.x !== undefined && screen.getAllDisplays().some(({ workArea: a }) =>
+    position.x >= a.x && position.x < a.x + a.width && position.y >= a.y && position.y < a.y + a.height);
+}
+
+// state.json : { x, y } du widget principal, et { detached: { section: { x, y } } }.
+function savePosition(window) {
+  const state = readJson(userFile('state.json'), {});
+  const [x, y] = window.getPosition();
+  if (window === win) Object.assign(state, { x, y });
+  else state.detached = { ...state.detached, [window.diva.section]: { x, y } };
+  fs.writeFileSync(userFile('state.json'), JSON.stringify(state));
+}
+
+// Un widget : le principal (section null) ou une section détachée (index.html?section=...).
+function createWidgetWindow(section, { x, y }) {
+  const window = new BrowserWindow({
     x, y,
     width: Math.round(WIDTH * currentScale),
-    height: 400,
+    height: 200,
     frame: false,
     transparent: true,
     resizable: false,
@@ -634,63 +710,108 @@ function createWindow() {
       zoomFactor: currentScale,
     },
   });
-
-  win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  win.once('ready-to-show', () => {
+  // Propre à chaque fenêtre : souris dessus (opacité) et hauteur demandée par l'interface.
+  window.diva = { section, hovered: false, contentHeight: 200 };
+  window.loadFile(path.join(__dirname, 'renderer', 'index.html'), section ? { query: { section } } : {});
+  window.once('ready-to-show', () => {
     applyWindowSettings();
-    win.show();
+    if (section) window.showInactive();
+    else window.show();
   });
-
-  win.on('moved', () => {
-    if (windowSettings().snapToEdges) snapToEdges();
-    const [newX, newY] = win.getPosition();
-    fs.writeFileSync(userFile('state.json'), JSON.stringify({ x: newX, y: newY }));
+  window.on('moved', () => {
+    if (windowSettings().snapToEdges) snapToEdges(window);
+    savePosition(window);
   });
+  return window;
+}
 
+function createWindow() {
+  const saved = readJson(userFile('state.json'), {});
+  currentScale = clampScale(windowSettings().scale);
+  win = createWidgetWindow(null, isOnScreen(saved) ? saved : defaultPosition());
   win.on('blur', () => {
     if (blurGuard || !windowSettings().hideOnBlur) return;
     win.hide();
     hiddenByBlurAt = Date.now();
   });
+  syncDetachedWindows();
+}
+
+// Ouvre ou ferme les widgets détachés pour coller à la disposition.
+function syncDetachedWindows() {
+  const { detached } = layoutSettings();
+  for (const [section, window] of detachedWindows) {
+    if (detached.includes(section)) continue;
+    window.destroy();
+    detachedWindows.delete(section);
+  }
+  const saved = readJson(userFile('state.json'), {}).detached ?? {};
+  for (const section of detached) {
+    if (detachedWindows.has(section)) continue;
+    detachedWindows.set(section, createWidgetWindow(section, isOnScreen(saved[section]) ? saved[section] : besideMainWindow()));
+  }
+}
+
+// Premier détachement : juste à gauche du widget principal (ou à droite s'il n'y a pas la place).
+function besideMainWindow() {
+  const bounds = win.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  const width = Math.round(WIDTH * currentScale);
+  const x = bounds.x - width - SNAP_GAP >= area.x ? bounds.x - width - SNAP_GAP : bounds.x + bounds.width + SNAP_GAP;
+  return { x, y: bounds.y + detachedWindows.size * 40 };
 }
 
 function applyWindowSettings() {
   if (!win) return;
   const settings = windowSettings();
-  win.setAlwaysOnTop(settings.alwaysOnTop);
+  // « system » suit le mode clair/sombre de Windows ; le CSS lit prefers-color-scheme.
+  nativeTheme.themeSource = ['dark', 'light', 'system'].includes(settings.theme) ? settings.theme : 'dark';
   // Opacité réglée au repos, pleine quand la souris est dessus.
   const opacity = Math.min(100, Math.max(30, Number(settings.idleOpacity) || 100));
-  win.setOpacity(hovered ? 1 : opacity / 100);
   const scale = clampScale(settings.scale);
-  if (Math.abs(scale - currentScale) > 0.001) applyScale(scale, stuckToRight());
-  win.webContents.send('window-settings', settings);
+  const rescale = Math.abs(scale - currentScale) > 0.001;
+  if (rescale) currentScale = scale;
+  for (const window of allWindows()) {
+    window.setAlwaysOnTop(settings.alwaysOnTop);
+    window.setOpacity(window.diva.hovered ? 1 : opacity / 100);
+    if (rescale) applyScale(window, stuckToRight(window));
+  }
+  broadcast('window-settings', settings);
 }
 
 // --- Taille : tout le widget est mis à l'échelle (zoom), la mise en page ne change pas ---
 
 const clampScale = (scale) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(scale) || 1));
 
-function stuckToRight() {
-  const bounds = win.getBounds();
+function stuckToRight(window) {
+  const bounds = window.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
   return Math.abs(bounds.x + bounds.width - (area.x + area.width - SNAP_GAP)) <= 1;
 }
 
-// anchorRight : le bord droit reste en place (poignée de gauche, ou widget collé à droite).
-function applyScale(scale, anchorRight = false) {
-  const bounds = win.getBounds();
-  currentScale = scale;
-  win.webContents.setZoomFactor(scale);
-  const width = Math.round(WIDTH * scale);
+// Applique currentScale à une fenêtre. anchorRight : son bord droit reste en place
+// (poignée de gauche, ou widget collé à droite de l'écran).
+function applyScale(window, anchorRight = false) {
+  const bounds = window.getBounds();
+  window.webContents.setZoomFactor(currentScale);
+  const width = Math.round(WIDTH * currentScale);
   const x = anchorRight ? bounds.x + bounds.width - width : bounds.x;
-  win.setBounds({ x, y: bounds.y, width, height: bounds.height });
+  window.setBounds({ x, y: bounds.y, width, height: bounds.height });
   // La mise en page ne change pas de taille, l'interface ne redemandera pas de hauteur.
-  resizeWindow(contentHeight);
+  resizeWindow(window, window.diva.contentHeight);
+}
+
+// L'échelle est commune à tous les widgets ; celui qu'on tire garde le côté opposé fixe.
+function setScale(scale, dragged = null) {
+  currentScale = scale;
+  for (const window of allWindows()) {
+    applyScale(window, window === dragged?.window ? dragged.side === 'left' : stuckToRight(window));
+  }
 }
 
 // Poignées des coins du bas : la largeur suit la souris, l'échelle suit la largeur.
-function startResizeDrag(side) {
-  resizeDrag = { side, cursorX: screen.getCursorScreenPoint().x, width: win.getBounds().width };
+function startResizeDrag(window, side) {
+  resizeDrag = { window, side, cursorX: screen.getCursorScreenPoint().x, width: window.getBounds().width };
 }
 
 function moveResizeDrag() {
@@ -698,20 +819,20 @@ function moveResizeDrag() {
   const delta = screen.getCursorScreenPoint().x - resizeDrag.cursorX;
   const width = resizeDrag.width + (resizeDrag.side === 'left' ? -delta : delta);
   const scale = clampScale(width / WIDTH);
-  if (Math.abs(scale - currentScale) > 0.002) applyScale(scale, resizeDrag.side === 'left');
+  if (Math.abs(scale - currentScale) > 0.002) setScale(scale, resizeDrag);
 }
 
 function endResizeDrag() {
   if (!resizeDrag) return;
   const scale = Math.round(currentScale * 100) / 100;
-  applyScale(scale, resizeDrag.side === 'left');
+  setScale(scale, resizeDrag);
   resizeDrag = null;
   updateSection('window', { scale });
 }
 
 // Lâché à moins de SNAP_DISTANCE d'un bord de l'écran : le widget s'y colle, à SNAP_GAP du bord.
-function snapToEdges() {
-  const bounds = win.getBounds();
+function snapToEdges(window) {
+  const bounds = window.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
   let { x, y } = bounds;
   const left = area.x + SNAP_GAP;
@@ -722,21 +843,21 @@ function snapToEdges() {
   else if (Math.abs(x - right) < SNAP_DISTANCE) x = right;
   if (Math.abs(y - top) < SNAP_DISTANCE) y = top;
   else if (Math.abs(y - bottom) < SNAP_DISTANCE) y = bottom;
-  if (x !== bounds.x || y !== bounds.y) win.setPosition(x, y);
+  if (x !== bounds.x || y !== bounds.y) window.setPosition(x, y);
 }
 
 // Change la hauteur sans sortir de l'écran ; collé en bas, le widget grandit vers le haut.
 // `height` est en pixels d'interface : on applique l'échelle.
-function resizeWindow(height) {
-  contentHeight = height;
-  const bounds = win.getBounds();
+function resizeWindow(window, height) {
+  window.diva.contentHeight = height;
+  const bounds = window.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
   const newHeight = Math.min(Math.ceil(height * currentScale), area.height);
   const areaBottom = area.y + area.height;
   const stuckToBottom = Math.abs(bounds.y + bounds.height - (areaBottom - SNAP_GAP)) <= 1;
   let y = stuckToBottom ? areaBottom - SNAP_GAP - newHeight : bounds.y;
   y = Math.max(area.y, Math.min(y, areaBottom - newHeight));
-  win.setBounds({ x: bounds.x, y, width: Math.round(WIDTH * currentScale), height: newHeight });
+  window.setBounds({ x: bounds.x, y, width: Math.round(WIDTH * currentScale), height: newHeight });
 }
 
 function toggleWindow() {
@@ -770,7 +891,13 @@ function createTray() {
     if (Date.now() - hiddenByBlurAt < 400) return;
     toggleWindow();
   });
-  const refreshMenu = () => tray.setContextMenu(Menu.buildFromTemplate([
+  refreshTrayMenu();
+}
+
+function refreshTrayMenu() {
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: `Installer Diva ${updateReady} et redémarrer`, visible: Boolean(updateReady), click: installUpdate },
+    { type: 'separator', visible: Boolean(updateReady) },
     { label: 'Afficher / masquer', click: toggleWindow },
     { label: 'Modifier la config', click: () => shell.openPath(userFile('config.json')) },
     {
@@ -779,13 +906,12 @@ function createTray() {
       checked: app.getLoginItemSettings(LOGIN_ITEM).openAtLogin,
       click: (item) => {
         app.setLoginItemSettings({ ...LOGIN_ITEM, openAtLogin: item.checked });
-        refreshMenu();
+        refreshTrayMenu();
       },
     },
     { type: 'separator' },
     { label: 'Quitter', click: () => app.quit() },
   ]));
-  refreshMenu();
 }
 
 // --- Communication avec l'interface --------------------------------------------------
@@ -799,8 +925,17 @@ ipcMain.handle('get-captures', () => capturesPayload());
 ipcMain.handle('capture-thumbnail', (_event, file) => captures.thumbnail(String(file)));
 ipcMain.on('capture-drag', (event, file) => dragCapture(event.sender, String(file)));
 ipcMain.on('capture-open', (_event, file) => captures.find(String(file)) && shell.openPath(String(file)));
-ipcMain.on('capture-menu', (_event, file) => showCaptureMenu(String(file)));
+ipcMain.on('capture-menu', (event, file) => showCaptureMenu(String(file), windowOf(event)));
 ipcMain.on('update-captures', (_event, patch) => updateSection('captures', patch));
+ipcMain.handle('get-layout', () => layoutSettings());
+ipcMain.handle('get-update', () => updateStatus());
+ipcMain.handle('check-updates', () => checkForUpdates());
+ipcMain.on('install-update', () => installUpdate());
+ipcMain.on('update-layout', (_event, patch) => updateSection('layout', patch));
+// Le × d'un widget détaché le rattache au widget principal.
+ipcMain.on('attach-section', (_event, section) => {
+  updateSection('layout', { detached: layoutSettings().detached.filter((entry) => entry !== section) });
+});
 ipcMain.handle('get-timer', () => ({ ...timer.state(), settings: timerSettings() }));
 ipcMain.on('timer', (_event, action, minutes) => {
   const actions = {
@@ -826,19 +961,24 @@ ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
 ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
 ipcMain.on('update-window', (_event, patch) => updateSection('window', patch));
 ipcMain.on('preview-opacity', (_event, value) => {
-  win.setOpacity(Math.min(100, Math.max(30, Number(value) || 100)) / 100);
+  for (const window of allWindows()) window.setOpacity(Math.min(100, Math.max(30, Number(value) || 100)) / 100);
 });
-ipcMain.on('hover', (_event, isHovered) => {
-  hovered = Boolean(isHovered);
+ipcMain.on('hover', (event, isHovered) => {
+  const window = windowOf(event);
+  if (!window?.diva) return;
+  window.diva.hovered = Boolean(isHovered);
   applyWindowSettings();
 });
 ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
-ipcMain.on('app-menu', (_event, name) => showAppMenu(name));
+ipcMain.on('app-menu', (event, name) => showAppMenu(name, windowOf(event)));
 ipcMain.on('media-command', (_event, command) => mediaHelper?.send(command));
 ipcMain.on('audio-command', (_event, command) => audioHelper?.send(command));
 ipcMain.on('hide', () => win.hide());
-ipcMain.on('resize', (_event, height) => resizeWindow(height));
-ipcMain.on('resize-start', (_event, side) => startResizeDrag(side === 'left' ? 'left' : 'right'));
+ipcMain.on('resize', (event, height) => {
+  const window = windowOf(event);
+  if (window?.diva) resizeWindow(window, height);
+});
+ipcMain.on('resize-start', (event, side) => startResizeDrag(windowOf(event), side === 'left' ? 'left' : 'right'));
 ipcMain.on('resize-move', () => moveResizeDrag());
 ipcMain.on('resize-end', () => endResizeDrag());
 
@@ -858,10 +998,10 @@ if (!app.requestSingleInstanceLock()) {
     allowSystemAudioCapture();
     // Les notifications Windows s'affichent au nom de l'app installée (raccourci du menu Démarrer).
     if (app.isPackaged) app.setAppUserModelId('com.bleathingman.diva');
-    captures = createCaptures({ onChange: () => win?.webContents.send('captures', capturesPayload()) });
+    captures = createCaptures({ onChange: () => broadcast('captures', capturesPayload()) });
     timer = createTimer({
       getSettings: timerSettings,
-      onChange: (state) => win?.webContents.send('timer', { ...state, settings: timerSettings() }),
+      onChange: (state) => broadcast('timer', { ...state, settings: timerSettings() }),
       onFinish: timerFinished,
     });
     createWindow();
@@ -873,6 +1013,7 @@ if (!app.requestSingleInstanceLock()) {
     audioHelper = startHelper(AUDIO_HELPER_PATH, 'audio');
     refreshRecentApps();
     getInstalledApps(); // préchargées : la recherche répond tout de suite
+    setupUpdates();
     setInterval(() => {
       installedApps = null;
       refreshRecentApps();

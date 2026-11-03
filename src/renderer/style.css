@@ -1,4 +1,5 @@
-/* Thème monochrome : noir, blancs et gris doux. Toutes les couleurs passent par ces variables. */
+/* Thème monochrome : noir, blancs et gris doux. Toutes les couleurs passent par ces variables.
+   Le thème clair (plus bas) ne fait que les redéfinir. */
 :root {
   --bg: rgba(12, 12, 13, 0.985);
   --surface: rgba(255, 255, 255, 0.035);
@@ -9,11 +10,41 @@
   --text: #ececee;
   --muted: #8e8e93;
   --faint: #56565c;
-  --white: #f5f5f7;
+  --accent: #f5f5f7; /* bouton lecture, interrupteurs, boutons principaux */
+  --accent-hover: #fff;
+  --on-accent: #0c0c0d; /* texte et icônes posés sur l'accent */
+  --fill-soft: #b4b4ba; /* partie remplie des curseurs et du minuteur */
+  --error: #e3a3a3;
+  --toast-bg: rgba(32, 32, 34, 0.96);
+  --glow: rgba(255, 255, 255, 0.35);
+  --viz: rgba(255, 255, 255, 0.13); /* barres du visualiseur (lu par app.js) */
   --radius-lg: 22px;
   --radius: 16px;
   --radius-sm: 12px;
   --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Thème clair : choisi dans les réglages, ou automatique si Windows est en mode clair. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: rgba(248, 248, 250, 0.985);
+    --surface: rgba(0, 0, 0, 0.03);
+    --surface-hover: rgba(0, 0, 0, 0.055);
+    --surface-active: rgba(0, 0, 0, 0.085);
+    --border: rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --faint: #a1a1a6;
+    --accent: #1d1d1f;
+    --accent-hover: #000;
+    --on-accent: #fafafa;
+    --fill-soft: #6e6e73;
+    --error: #b54848;
+    --toast-bg: rgba(255, 255, 255, 0.97);
+    --glow: rgba(0, 0, 0, 0.15);
+    --viz: rgba(0, 0, 0, 0.1);
+  }
 }
 
 * {
@@ -77,8 +108,8 @@ button {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--white);
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.35);
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--glow);
 }
 
 .clock {
@@ -193,13 +224,13 @@ button {
 .controls .play {
   width: 38px;
   height: 38px;
-  background: var(--white);
-  color: #0c0c0d;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .controls .play:hover {
-  background: #fff;
-  color: #0c0c0d;
+  background: var(--accent-hover);
+  color: var(--on-accent);
   transform: scale(1.05);
 }
 
@@ -225,14 +256,14 @@ button {
   display: none;
   padding: 9px;
   border-radius: 999px;
-  background: var(--white);
-  color: #0c0c0d;
+  background: var(--accent);
+  color: var(--on-accent);
   font-weight: 600;
   transition: background 0.2s var(--ease), transform 0.15s var(--ease);
 }
 
 .spotify-button:hover {
-  background: #fff;
+  background: var(--accent-hover);
 }
 
 .spotify-button:active {
@@ -252,7 +283,7 @@ button {
 
 .slider {
   --fill: 0%;
-  --track-fill: #b4b4ba;
+  --track-fill: var(--fill-soft);
   appearance: none;
   width: 100%;
   height: 16px;
@@ -263,7 +294,7 @@ button {
 
 .slider:hover,
 .slider[data-dragging] {
-  --track-fill: var(--white);
+  --track-fill: var(--accent);
 }
 
 .slider::-webkit-slider-runnable-track {
@@ -279,7 +310,7 @@ button {
   height: 12px;
   margin-top: -4px;
   border-radius: 50%;
-  background: var(--white);
+  background: var(--accent);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
   transform: scale(0);
   transition: transform 0.15s var(--ease);
@@ -332,7 +363,7 @@ button {
 }
 
 .like.liked {
-  color: var(--white);
+  color: var(--accent);
 }
 
 .like.liked svg {
@@ -352,7 +383,6 @@ button {
 /* --- Volume --- */
 
 .audio {
-  margin-top: 10px;
   padding: 4px 6px 4px 4px;
   border-radius: var(--radius);
   background: var(--surface);
@@ -1032,7 +1062,7 @@ h2 {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--white);
+  background: var(--accent);
   box-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
 }
 
@@ -1090,7 +1120,7 @@ h2 {
 .timer-fill {
   width: 0;
   height: 100%;
-  background: #b4b4ba;
+  background: var(--fill-soft);
   transition: width 0.25s linear;
 }
 
@@ -1134,6 +1164,85 @@ h2 {
 
 .timer-custom input::-webkit-inner-spin-button {
   appearance: none;
+}
+
+/* --- Bandeau de mise à jour --- */
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 6px 6px 6px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-active);
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+}
+
+/* --- Disposition des sections et widgets détachés --- */
+
+/* Les sections s'empilent avec un écart régulier, quel que soit leur ordre. */
+#view-main:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#view-main > section > h2:first-child {
+  margin-top: 6px;
+}
+
+[data-layout-hidden] {
+  display: none !important;
+}
+
+.list-row.no-icon {
+  grid-template-columns: 0 minmax(0, 1fr) auto;
+  gap: 0 10px;
+}
+
+.list-row.muted .row-name {
+  color: var(--faint);
+}
+
+.row-actions .icon-button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* Widget détaché : une barre fine avec le nom de la section et le × qui le rattache. */
+.detached .titlebar {
+  height: 22px;
+  margin-bottom: 6px;
+}
+
+.detached .titlebar > :not(.brand):not(#hide),
+.detached .resize-grip {
+  display: none;
+}
+
+.detached .brand {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.detached .brand .dot {
+  display: none;
+}
+
+.detached #hide {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+}
+
+.detached #view-main > section > h2:first-child {
+  display: none;
 }
 
 /* --- Formulaire d'ajout de lien --- */
@@ -1182,14 +1291,14 @@ h2 {
   margin-top: 4px;
   padding: 10px;
   border-radius: var(--radius-sm);
-  background: var(--white);
-  color: #0c0c0d;
+  background: var(--accent);
+  color: var(--on-accent);
   font-weight: 600;
   transition: background 0.2s var(--ease), transform 0.15s var(--ease);
 }
 
 .primary-button:hover {
-  background: #fff;
+  background: var(--accent-hover);
 }
 
 .primary-button:active {
@@ -1199,7 +1308,7 @@ h2 {
 .form-error {
   margin-left: 2px;
   font-size: 12px;
-  color: #e3a3a3;
+  color: var(--error);
 }
 
 /* Interrupteur : gris éteint, blanc allumé. */
@@ -1230,11 +1339,11 @@ h2 {
 }
 
 .switch:checked {
-  background: var(--white);
+  background: var(--accent);
 }
 
 .switch:checked::before {
-  background: #0c0c0d;
+  background: var(--on-accent);
   transform: translateX(14px);
 }
 
@@ -1295,7 +1404,7 @@ h2 {
   bottom: 12px;
   padding: 9px 14px;
   border-radius: var(--radius-sm);
-  background: rgba(32, 32, 34, 0.96);
+  background: var(--toast-bg);
   border: 1px solid var(--border-strong);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
   font-size: 12px;

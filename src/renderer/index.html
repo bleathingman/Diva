@@ -26,9 +26,14 @@
       </button>
     </header>
 
+    <div id="update-banner" class="update-banner" hidden>
+      <span id="update-text"></span>
+      <button id="update-install" class="pill-button">Redémarrer</button>
+    </div>
+
     <!-- Vue principale -->
     <div id="view-main" class="view">
-      <section id="media" class="media idle">
+      <section id="media" class="media idle" data-section="media">
         <div id="media-backdrop" class="media-backdrop"></div>
         <canvas id="visualizer" class="visualizer"></canvas>
         <img id="cover" class="cover" alt="">
@@ -59,7 +64,7 @@
         <button id="open-spotify" class="spotify-button">Ouvrir Spotify</button>
       </section>
 
-      <section id="audio" class="audio">
+      <section id="audio" class="audio" data-section="audio">
         <div class="volume-row">
           <button id="mute" class="icon-button" title="Couper / remettre le son">
             <svg class="icon-volume" viewBox="0 0 24 24"><path d="M11 5L6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>
@@ -78,12 +83,12 @@
         </div>
       </section>
 
-      <section id="captures-section" hidden>
+      <section id="captures-section" data-section="captures" hidden>
         <h2>Captures</h2>
         <div id="captures" class="captures"></div>
       </section>
 
-      <section>
+      <section data-section="apps">
         <h2 id="apps-title">Apps</h2>
         <div id="apps" class="apps"></div>
         <p id="apps-empty" class="empty" hidden>Aucune app. Ajoute-en depuis les réglages.</p>
@@ -182,11 +187,9 @@
       <div id="hidden-list" class="list"></div>
       <p id="hidden-empty" class="empty" hidden>Aucune. Clic droit sur une app pour la masquer.</p>
 
-      <h2>Captures</h2>
-      <label class="row">
-        <span>Afficher les captures récentes</span>
-        <input id="captures-toggle" type="checkbox" class="switch">
-      </label>
+      <h2>Disposition</h2>
+      <div id="layout-list" class="list"></div>
+      <p class="setting-hint">Masque une section, change son ordre, ou détache-la dans son propre widget à placer où tu veux.</p>
       <p id="captures-folders" class="setting-hint"></p>
 
       <h2>Spotify</h2>
@@ -194,6 +197,13 @@
         <span id="spotify-state">Non connecté</span>
         <button id="spotify-action" class="pill-button">Connecter</button>
       </div>
+
+      <h2>Mises à jour</h2>
+      <div class="row">
+        <span id="version-text">Diva</span>
+        <button id="check-updates" class="pill-button">Vérifier</button>
+      </div>
+      <p id="update-hint" class="setting-hint">Diva se met à jour toute seule depuis GitHub.</p>
 
       <h2>Fenêtre</h2>
       <label class="row">
@@ -208,6 +218,14 @@
         <span>S'aimanter aux bords de l'écran</span>
         <input id="snap-to-edges" type="checkbox" class="switch">
       </label>
+      <div class="row">
+        <span>Thème</span>
+        <div class="segmented">
+          <button data-theme="dark">Sombre</button>
+          <button data-theme="light">Clair</button>
+          <button data-theme="system" title="Suit le mode clair ou sombre de Windows">Auto</button>
+        </div>
+      </div>
       <div class="row">
         <span>Taille</span>
         <div id="size-presets" class="segmented">

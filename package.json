@@ -1,14 +1,15 @@
 {
   "name": "diva",
   "productName": "Diva",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Widget companion pour le PC : musique, volume, lanceur d'apps.",
   "author": "bleathingman",
   "main": "src/main.js",
   "private": true,
   "scripts": {
     "start": "set ELECTRON_RUN_AS_NODE=&& electron .",
-    "dist": "electron-builder --win nsis"
+    "dist": "electron-builder --win nsis",
+    "release": "electron-builder --win nsis --publish always"
   },
   "build": {
     "appId": "com.bleathingman.diva",
@@ -39,10 +40,21 @@
       "runAfterFinish": true,
       "shortcutName": "Diva",
       "artifactName": "Diva-Setup-${version}.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "bleathingman",
+        "repo": "Diva",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^45.1.0",
     "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
   }
 }

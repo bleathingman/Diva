@@ -1,5 +1,9 @@
 const $ = (selector) => document.querySelector(selector);
 
+// Widget détaché (index.html?section=apps...) : il n'affiche que cette section.
+const DETACHED = new URLSearchParams(location.search).get('section');
+if (DETACHED) document.body.classList.add('detached');
+
 // Même règle que le processus principal : sert à reconnaître une app quel que soit son nom exact.
 const normalize = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 // Pour la recherche on ignore les accents : "pokemon" doit trouver "Pokémon Z".
@@ -364,6 +368,7 @@ function listRow(entry, actions = []) {
 // --- Réglages ---
 
 function renderSettings() {
+  renderLayoutSettings();
   const { pinned, hidden, count, fillWithRecent } = grid.settings;
 
   const pinnedList = $('#pinned-list');
@@ -384,7 +389,8 @@ function renderSettings() {
       }),
     ]);
     pinnedList.append(row);
-    fillIcon(entry, icon);
+    // La grille a l'icône à jour (logo d'une app du Store retrouvé après sa mise à jour).
+    fillIcon(grid.apps.find((app) => app.pinned && app.name === entry.name) ?? entry, icon);
   });
   $('#pinned-empty').hidden = pinned.length > 0;
 
@@ -498,7 +504,8 @@ function showLikeError(message) {
 
 // Windows ne donne que le titre : à chaque morceau, on demande à Spotify lequel c'est.
 async function refreshLike() {
-  const isSpotify = media.active && /spotify/i.test(media.app ?? '');
+  // Seul le widget qui montre la musique interroge Spotify (pas un appel par widget).
+  const isSpotify = sectionShown('media') && media.active && /spotify/i.test(media.app ?? '');
   const key = isSpotify && spotifyStatus.connected ? `${media.title}|${media.artist}` : '';
   if (key === likeKey) return;
   likeKey = key;
@@ -629,7 +636,7 @@ function stopCapture() {
 }
 
 function updateVisualizer() {
-  const wanted = visualizerEnabled && media.playing && !document.hidden;
+  const wanted = visualizerEnabled && media.playing && !document.hidden && sectionShown('media');
   if (wanted) {
     clearTimeout(captureStopTimer);
     captureStopTimer = null;
@@ -661,7 +668,7 @@ function drawVisualizer() {
   const draw = canvas.getContext('2d');
   draw.setTransform(scale, 0, 0, scale, 0, 0);
   draw.clearRect(0, 0, width, height);
-  draw.fillStyle = 'rgba(255, 255, 255, 0.13)';
+  draw.fillStyle = getComputedStyle(canvas).getPropertyValue('--viz'); // suit le thème
   const gap = 2;
   const barWidth = (width - gap * (BAR_COUNT - 1)) / BAR_COUNT;
   capture.bands.forEach(([start, end], index) => {
@@ -690,12 +697,12 @@ const timeAgo = (time) => {
 
 let capturesKey = '';
 
-async function renderCaptures({ enabled, items, folders }) {
-  $('#captures-toggle').checked = enabled;
+async function renderCaptures({ items, folders }) {
   $('#captures-folders').textContent = folders.length
-    ? `Dossiers surveillés : ${folders.join(' · ')}`
+    ? `Captures prises dans : ${folders.join(' · ')}`
     : 'Aucun dossier de captures trouvé.';
-  $('#captures-section').hidden = !enabled || items.length === 0;
+  // Masquée tant qu'il n'y a aucune capture (la disposition peut aussi la masquer).
+  $('#captures-section').hidden = items.length === 0;
 
   const key = items.map((item) => `${item.path}|${item.time}`).join('/');
   if (key === capturesKey) return;
@@ -728,7 +735,88 @@ async function renderCaptures({ enabled, items, folders }) {
   }
 }
 
-$('#captures-toggle').addEventListener('change', (event) => window.diva.updateCaptures({ enabled: event.target.checked }));
+// --- Mises à jour ---
+
+function renderUpdate({ version, ready }) {
+  $('#version-text').textContent = `Diva ${version}`;
+  // Le bandeau n'apparaît que dans le widget principal.
+  $('#update-banner').hidden = !ready || Boolean(DETACHED);
+  $('#update-text').textContent = ready ? `Diva ${ready} est prête` : '';
+}
+
+$('#update-install').addEventListener('click', () => window.diva.installUpdate());
+$('#check-updates').addEventListener('click', async () => {
+  $('#update-hint').textContent = 'Vérification…';
+  $('#update-hint').textContent = await window.diva.checkUpdates();
+});
+
+// --- Disposition : ordre, sections masquées, sections détachées ---
+
+const SECTION_LABELS = { media: 'Musique', audio: 'Volume', captures: 'Captures', apps: 'Apps' };
+let layout = { order: Object.keys(SECTION_LABELS), hidden: [], detached: [] };
+
+Object.assign(ICONS, {
+  hide: '<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A10 10 0 0 1 12 6c6.5 0 10 6 10 6a17 17 0 0 1-3.1 3.9M6.6 6.6C3.8 8.4 2 12 2 12s3.5 6 10 6a9.6 9.6 0 0 0 4.4-1"/></svg>',
+  detach: '<svg viewBox="0 0 24 24"><rect x="3" y="8" width="13" height="13" rx="2"/><path d="M10 3h11v11M21 3l-9 9"/></svg>',
+  attach: '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M14 10H8v6M8 16l8-8"/></svg>',
+});
+
+// Une section est visible dans CE widget : le principal montre celles ni masquées ni détachées,
+// un widget détaché ne montre que la sienne.
+function sectionShown(name) {
+  if (DETACHED) return name === DETACHED;
+  return !layout.hidden.includes(name) && !layout.detached.includes(name);
+}
+
+function renderLayout(next) {
+  layout = next;
+  const view = $('#view-main');
+  for (const name of layout.order) {
+    const section = view.querySelector(`[data-section="${name}"]`);
+    view.append(section); // l'ordre du DOM suit la disposition
+    section.toggleAttribute('data-layout-hidden', !sectionShown(name));
+  }
+  if (!$('#view-settings').hidden) renderLayoutSettings();
+  updateVisualizer();
+  refreshLike();
+}
+
+function renderLayoutSettings() {
+  const list = $('#layout-list');
+  list.replaceChildren();
+  const { order, hidden, detached } = layout;
+  order.forEach((name, index) => {
+    const isHidden = hidden.includes(name);
+    const isDetached = detached.includes(name);
+    const move = (delta) => {
+      const target = index + delta;
+      if (target < 0 || target >= order.length) return;
+      const reordered = [...order];
+      [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+      window.diva.updateLayout({ order: reordered });
+    };
+    const toggleHidden = actionButton(isHidden ? 'show' : 'hide', isHidden ? 'Afficher' : 'Masquer', () => {
+      window.diva.updateLayout({ hidden: isHidden ? hidden.filter((entry) => entry !== name) : [...hidden, name] });
+    });
+    // Détacher une section masquée la réaffiche : elle aura son propre widget.
+    const toggleDetached = actionButton(isDetached ? 'attach' : 'detach', isDetached ? 'Rattacher au widget principal' : 'Détacher dans son propre widget', () => {
+      window.diva.updateLayout(isDetached
+        ? { detached: detached.filter((entry) => entry !== name) }
+        : { detached: [...detached, name], hidden: hidden.filter((entry) => entry !== name) });
+    });
+    toggleHidden.disabled = isDetached;
+    const { row } = listRow({ name: SECTION_LABELS[name] }, [
+      actionButton('up', 'Monter', () => move(-1)),
+      actionButton('down', 'Descendre', () => move(1)),
+      toggleHidden,
+      toggleDetached,
+    ]);
+    row.classList.add('no-icon');
+    row.classList.toggle('muted', isHidden);
+    if (isDetached) row.querySelector('.row-name').textContent += ' · détachée';
+    list.append(row);
+  });
+}
 
 // --- Minuteur ---
 
@@ -986,6 +1074,9 @@ function renderWindowSettings(settings) {
   $('#hide-on-blur').checked = settings.hideOnBlur;
   $('#snap-to-edges').checked = settings.snapToEdges;
   $('#visualizer-toggle').checked = settings.visualizer;
+  for (const button of document.querySelectorAll('[data-theme]')) {
+    button.classList.toggle('active', button.dataset.theme === settings.theme);
+  }
   visualizerEnabled = settings.visualizer;
   updateVisualizer();
   setSlider($('#idle-opacity'), settings.idleOpacity);
@@ -1008,6 +1099,10 @@ bindSlider($('#idle-opacity'), {
 $('#idle-opacity').addEventListener('input', () => {
   $('#idle-opacity-value').textContent = $('#idle-opacity').value;
 });
+
+for (const button of document.querySelectorAll('[data-theme]')) {
+  button.addEventListener('click', () => window.diva.updateWindow({ theme: button.dataset.theme }));
+}
 
 for (const button of document.querySelectorAll('[data-scale]')) {
   button.addEventListener('click', () => window.diva.updateWindow({ scale: Number(button.dataset.scale) }));
@@ -1076,7 +1171,12 @@ $('#link-form').addEventListener('submit', async (event) => {
 
 // --- Démarrage ---
 
-$('#hide').addEventListener('click', () => window.diva.hide());
+// Dans un widget détaché, le × le rattache au widget principal.
+if (DETACHED) {
+  $('.brand').lastChild.textContent = SECTION_LABELS[DETACHED];
+  $('#hide').title = 'Rattacher au widget principal';
+}
+$('#hide').addEventListener('click', () => (DETACHED ? window.diva.attachSection(DETACHED) : window.diva.hide()));
 $('#toggle-settings').addEventListener('click', () => showView(SETTINGS_VIEWS.includes(currentView) ? 'main' : 'settings'));
 $('#open-search').addEventListener('click', () => showView(currentView === 'search' ? 'main' : 'search'));
 $('#add-app').addEventListener('click', () => showView('picker'));
@@ -1087,7 +1187,7 @@ for (const button of document.querySelectorAll('[data-back]')) {
 document.addEventListener('keydown', (event) => {
   // Sur la vue principale, taper une lettre ouvre la recherche avec cette lettre.
   const typing = event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey;
-  if (currentView === 'main' && typing && event.key !== ' ' && !(event.target instanceof HTMLInputElement)) {
+  if (!DETACHED && currentView === 'main' && typing && event.key !== ' ' && !(event.target instanceof HTMLInputElement)) {
     event.preventDefault();
     showView('search');
     $('#search-input').value = event.key;
@@ -1121,6 +1221,10 @@ window.diva.getWindowSettings().then(renderWindowSettings);
 window.diva.spotifyStatus().then(renderSpotifyStatus);
 window.diva.onCaptures(renderCaptures);
 window.diva.getCaptures().then(renderCaptures);
+window.diva.onLayout(renderLayout);
+window.diva.onUpdate(renderUpdate);
+window.diva.getUpdate().then(renderUpdate);
+window.diva.getLayout().then(renderLayout);
 window.diva.onTimer(updateTimer);
 window.diva.getTimer().then(updateTimer);
 window.diva.onTimerDone(({ title, body }) => {
