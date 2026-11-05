@@ -1,0 +1,41 @@
+# Fabrique l'installeur Windows et le publie en release GitHub à chaque tag de version.
+# Les Diva installés la trouvent ensuite tout seuls (mises à jour automatiques).
+#
+# Pour publier une version :  npm version minor   (ou patch)
+#                             git push --follow-tags
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write # créer la release et y joindre l'installeur
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # Un tag v0.5.0 doit publier la version 0.5.0 : sinon les mises à jour seraient incohérentes.
+      - name: Vérifier que le tag correspond à package.json
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas à la version $version de package.json"
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Fabriquer et publier l'installeur
+        run: npm run release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

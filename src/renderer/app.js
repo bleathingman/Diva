@@ -636,7 +636,7 @@ function stopCapture() {
 }
 
 function updateVisualizer() {
-  const wanted = visualizerEnabled && media.playing && !document.hidden && sectionShown('media');
+  const wanted = visualizerEnabled && media.playing && !document.hidden && sectionShown('media') && !layout.miniMedia;
   if (wanted) {
     clearTimeout(captureStopTimer);
     captureStopTimer = null;
@@ -770,6 +770,8 @@ function sectionShown(name) {
 
 function renderLayout(next) {
   layout = next;
+  $('#media').classList.toggle('mini', layout.miniMedia);
+  $('#media-size').title = layout.miniMedia ? 'Agrandir' : 'Mode mini';
   const view = $('#view-main');
   for (const name of layout.order) {
     const section = view.querySelector(`[data-section="${name}"]`);
@@ -780,6 +782,8 @@ function renderLayout(next) {
   updateVisualizer();
   refreshLike();
 }
+
+$('#media-size').addEventListener('click', () => window.diva.updateLayout({ miniMedia: !layout.miniMedia }));
 
 function renderLayoutSettings() {
   const list = $('#layout-list');

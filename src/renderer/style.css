@@ -351,6 +351,100 @@ button {
   text-align: right;
 }
 
+/* --- Mode mini : la carte musique tient sur une ligne --- */
+
+/* Bouton réduire / agrandir : dans le coin en mode normal, visible au survol. */
+.media > button.media-size {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 24px;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 0.2s var(--ease), background 0.2s var(--ease), transform 0.25s var(--ease);
+}
+
+.media:hover > button.media-size {
+  opacity: 1;
+}
+
+.media-size svg {
+  width: 13px;
+  height: 13px;
+}
+
+.media.mini {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+}
+
+.media.mini .cover {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+
+/* Titre et artiste sur la même ligne, chacun coupé s'il est trop long. */
+.media.mini .track {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.media.mini .title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13px;
+}
+
+/* L'artiste garde jusqu'à 40 % de la ligne ; c'est le titre qui se coupe en premier. */
+.media.mini .artist {
+  flex: 0 0 auto;
+  max-width: 40%;
+  font-size: 12px;
+}
+
+/* Rien en lecture : pas de pochette, la place va au texte et au bouton Spotify. */
+.media.mini.idle .cover,
+.media.mini.idle .artist {
+  display: none;
+}
+
+.media.mini .progress,
+.media.mini > canvas.visualizer,
+.media.mini .controls [data-media="prev"],
+.media.mini .controls [data-media="next"] {
+  display: none;
+}
+
+.media.mini .controls {
+  flex: none;
+}
+
+.media.mini .controls .play {
+  width: 30px;
+  height: 30px;
+}
+
+.media.mini .spotify-button {
+  flex: none;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.media.mini > button.media-size {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  flex: none;
+  opacity: 1;
+  transform: rotate(180deg);
+}
+
 /* --- ❤ et visualiseur --- */
 
 .like {

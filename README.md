@@ -2,7 +2,7 @@
 
 Widget companion pour Windows : contrôle de la musique, volume et lanceur d'apps.
 
-- **Musique** : titre, pochette, lecture/pause, barre de progression (clic ou glisser pour avancer dans le morceau), visualiseur calé sur le son du PC, ❤ pour liker sur Spotify.
+- **Musique** : titre, pochette, lecture/pause, mode mini sur une ligne (bouton en bas à droite de la carte), barre de progression (clic ou glisser pour avancer dans le morceau), visualiseur calé sur le son du PC, ❤ pour liker sur Spotify.
 - **Volume** : volume général et coupure du son ; la flèche déplie le volume de chaque app qui a du son. Sortie audio changeable d'un clic (casque, écran...).
 - **Captures d'écran** : les 3 dernières captures (outil Capture d'écran et Game Bar) ; les glisser dans Discord ou ailleurs envoie le fichier, clic pour ouvrir, clic droit pour copier l'image.
 - **Minuteur** : bouton ⏱ dans la barre du haut ; durées toutes faites, durée libre ou Pomodoro (25 min de travail, 5 min de pause, grande pause tous les 4 cycles). Le temps restant reste affiché en haut, notification Windows à la fin.
@@ -29,11 +29,16 @@ L'exe n'est pas signé : au premier lancement, Windows SmartScreen peut afficher
 
 Diva installé vérifie la dernière release de [github.com/bleathingman/Diva](https://github.com/bleathingman/Diva/releases) au démarrage puis toutes les 6 h, la télécharge en arrière-plan et l'installe au redémarrage (bandeau « Redémarrer » ou menu de l'icône).
 
-1. Augmenter `version` dans `package.json` (ex. `0.4.0` → `0.5.0`), commit, push.
-2. `npm run dist`.
-3. Sur GitHub → **Releases** → **Draft a new release** : tag `v0.5.0`, et joindre les 3 fichiers de `dist/` : `Diva-Setup-0.5.0.exe`, `Diva-Setup-0.5.0.exe.blockmap`, `latest.yml`. **Publish release** (pas en brouillon ni en pré-version).
+Les releases sont fabriquées par GitHub ([.github/workflows/release.yml](.github/workflows/release.yml)) : pousser un tag `v…` suffit.
 
-Variante en une commande : créer un jeton GitHub (fine-grained, accès « Contents : Read and write » sur le dépôt Diva), puis `$env:GH_TOKEN="..."; npm run release`.
+```powershell
+npm version minor      # ou patch pour une petite correction : 0.4.0 -> 0.5.0, crée le commit et le tag v0.5.0
+git push --follow-tags # envoie le commit et le tag ; GitHub construit et publie l'installeur
+```
+
+Suivi dans l'onglet **Actions** du dépôt (environ 5 min). La release est refusée si le tag ne correspond pas à `version` dans `package.json`.
+
+En secours, à la main : `npm run dist`, puis une release GitHub avec le tag `v0.5.0` et les 3 fichiers de `dist/` (`Diva-Setup-0.5.0.exe`, `Diva-Setup-0.5.0.exe.blockmap`, `latest.yml`).
 
 ## Développer
 

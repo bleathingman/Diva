@@ -34,6 +34,7 @@ let tray = null;
 let config = null;
 let mediaHelper = null;
 let audioHelper = null;
+const lastHelperMessages = new Map(); // "canal:type" -> dernier message des modules média/volume
 let recentApps = [];
 let recentRefreshedAt = 0;
 let installedApps = null; // promesse gardée en cache, la liste change rarement
@@ -189,7 +190,7 @@ const SECTION_KEYS = {
   spotify: ['clientId'],
   captures: ['enabled'],
   timer: ['work', 'shortBreak', 'longBreak', 'cyclesBeforeLong'],
-  layout: ['order', 'hidden', 'detached'],
+  layout: ['order', 'hidden', 'detached', 'miniMedia'],
 };
 
 const SECTIONS = ['media', 'audio', 'captures', 'apps'];
@@ -222,7 +223,7 @@ function layoutSettings() {
   const layout = { order: SECTIONS, hidden: legacyHidden, detached: [], ...config?.layout };
   const known = (list) => (Array.isArray(list) ? list.filter((section) => SECTIONS.includes(section)) : []);
   const order = [...new Set([...known(layout.order), ...SECTIONS])];
-  return { order, hidden: known(layout.hidden), detached: known(layout.detached) };
+  return { order, hidden: known(layout.hidden), detached: known(layout.detached), miniMedia: Boolean(layout.miniMedia) };
 }
 
 function timerSettings() {
@@ -650,11 +651,16 @@ function startHelper(script, channel) {
       { windowsHide: true });
     helper.process = child;
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
+      let message;
       try {
-        broadcast(channel, JSON.parse(line));
+        message = JSON.parse(line);
       } catch {
-        // Ligne parasite (avertissement PowerShell...) : on l'ignore.
+        return; // ligne parasite (avertissement PowerShell...)
       }
+      // Les modules n'écrivent que les changements : on garde le dernier message de chaque
+      // type pour le donner aux fenêtres ouvertes après coup (widget détaché, rechargement).
+      lastHelperMessages.set(`${channel}:${message.type}`, { channel, message });
+      broadcast(channel, message);
     });
     child.stderr.on('data', (data) => console.error(`[${channel}]`, data.toString()));
     child.on('exit', () => {
@@ -713,6 +719,9 @@ function createWidgetWindow(section, { x, y }) {
   // Propre à chaque fenêtre : souris dessus (opacité) et hauteur demandée par l'interface.
   window.diva = { section, hovered: false, contentHeight: 200 };
   window.loadFile(path.join(__dirname, 'renderer', 'index.html'), section ? { query: { section } } : {});
+  window.webContents.on('did-finish-load', () => {
+    for (const { channel, message } of lastHelperMessages.values()) window.webContents.send(channel, message);
+  });
   window.once('ready-to-show', () => {
     applyWindowSettings();
     if (section) window.showInactive();
