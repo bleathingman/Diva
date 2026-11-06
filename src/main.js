@@ -22,8 +22,7 @@ const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
 // Dans l'app installée, le code est dans l'archive app.asar que PowerShell ne sait pas lire :
 // les scripts sont copiés à côté, dans app.asar.unpacked (voir "asarUnpack" dans package.json).
 const HELPERS_DIR = path.join(__dirname, '..', 'helpers').replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
-const MEDIA_HELPER_PATH = path.join(HELPERS_DIR, 'media.ps1');
-const AUDIO_HELPER_PATH = path.join(HELPERS_DIR, 'audio.ps1');
+const BRIDGE_PATH = path.join(HELPERS_DIR, 'bridge.ps1');
 const RECENT_APPS_PATH = path.join(HELPERS_DIR, 'recent-apps.ps1');
 const INSTALLED_APPS_PATH = path.join(HELPERS_DIR, 'installed-apps.ps1');
 const RECENT_REFRESH_MS = 10 * 60 * 1000;
@@ -32,8 +31,7 @@ const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
 let win = null;
 let tray = null;
 let config = null;
-let mediaHelper = null;
-let audioHelper = null;
+let bridge = null; // helpers/bridge.ps1 : média et volume dans un seul processus
 const lastHelperMessages = new Map(); // "canal:type" -> dernier message des modules média/volume
 let recentApps = [];
 let recentRefreshedAt = 0;
@@ -637,11 +635,12 @@ function allowSystemAudioCapture() {
   });
 }
 
-// --- Modules permanents : média (helpers/media.ps1) et volume (helpers/audio.ps1) ----
+// --- Pont permanent avec Windows : média et volume (helpers/bridge.ps1) -------------
 
-// Lance un script PowerShell qui tourne en continu : chaque ligne JSON qu'il écrit part vers
-// l'interface sur `channel`, et send() lui transmet une commande. Relancé s'il s'arrête.
-function startHelper(script, channel) {
+// Lance le script PowerShell qui tourne en continu : chaque ligne JSON qu'il écrit part vers
+// l'interface sur son canal (media, audio), et send() lui transmet une commande.
+// Relancé s'il s'arrête.
+function startBridge(script) {
   const helper = {
     process: null,
     send: (command) => helper.process?.stdin.write(`${String(command).replace(/[\r\n]/g, ' ')}\n`),
@@ -650,6 +649,7 @@ function startHelper(script, channel) {
     const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
       { windowsHide: true });
     helper.process = child;
+    updatePace(); // un pont relancé repart au rythme rapide : on lui redonne le bon
     readline.createInterface({ input: child.stdout }).on('line', (line) => {
       let message;
       try {
@@ -659,10 +659,11 @@ function startHelper(script, channel) {
       }
       // Les modules n'écrivent que les changements : on garde le dernier message de chaque
       // type pour le donner aux fenêtres ouvertes après coup (widget détaché, rechargement).
+      const { channel } = message;
       lastHelperMessages.set(`${channel}:${message.type}`, { channel, message });
       broadcast(channel, message);
     });
-    child.stderr.on('data', (data) => console.error(`[${channel}]`, data.toString()));
+    child.stderr.on('data', (data) => console.error('[bridge]', data.toString()));
     child.on('exit', () => {
       helper.process = null;
       if (!quitting) setTimeout(start, 2000);
@@ -670,6 +671,13 @@ function startHelper(script, channel) {
   };
   start();
   return helper;
+}
+
+// Aucun widget visible : le pont espace ses relevés (2 s au lieu de 0,4 s), il n'y a
+// personne pour voir la musique ou le volume bouger.
+function updatePace() {
+  const visible = allWindows().some((window) => window.isVisible());
+  bridge?.send(`pace ${visible ? 'fast' : 'slow'}`);
 }
 
 // --- Fenêtre, barre des tâches, raccourci --------------------------------------------
@@ -727,6 +735,15 @@ function createWidgetWindow(section, { x, y }) {
     if (section) window.showInactive();
     else window.show();
   });
+  // Chromium ne signale pas toujours à la page qu'Electron l'a cachée : on la prévient.
+  window.on('show', () => {
+    updatePace();
+    window.webContents.send('visibility', true);
+  });
+  window.on('hide', () => {
+    updatePace();
+    window.webContents.send('visibility', false);
+  });
   window.on('moved', () => {
     if (windowSettings().snapToEdges) snapToEdges(window);
     savePosition(window);
@@ -753,6 +770,7 @@ function syncDetachedWindows() {
     if (detached.includes(section)) continue;
     window.destroy();
     detachedWindows.delete(section);
+    updatePace();
   }
   const saved = readJson(userFile('state.json'), {}).detached ?? {};
   for (const section of detached) {
@@ -980,8 +998,8 @@ ipcMain.on('hover', (event, isHovered) => {
 });
 ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
 ipcMain.on('app-menu', (event, name) => showAppMenu(name, windowOf(event)));
-ipcMain.on('media-command', (_event, command) => mediaHelper?.send(command));
-ipcMain.on('audio-command', (_event, command) => audioHelper?.send(command));
+ipcMain.on('media-command', (_event, command) => bridge?.send(`media ${command}`));
+ipcMain.on('audio-command', (_event, command) => bridge?.send(`audio ${command}`));
 ipcMain.on('hide', () => win.hide());
 ipcMain.on('resize', (event, height) => {
   const window = windowOf(event);
@@ -992,6 +1010,10 @@ ipcMain.on('resize-move', () => moveResizeDrag());
 ipcMain.on('resize-end', () => endResizeDrag());
 
 // --- Démarrage -----------------------------------------------------------------------
+
+// Sans accélération graphique, Diva consomme moins (mesuré : CPU 3,2 % -> 1,3 % en lecture,
+// processus GPU 224 -> 112 Mo) pour un rendu identique : un widget n'a pas besoin du GPU.
+app.disableHardwareAcceleration();
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -1018,8 +1040,7 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
     registerHotkey();
     watchConfig();
-    mediaHelper = startHelper(MEDIA_HELPER_PATH, 'media');
-    audioHelper = startHelper(AUDIO_HELPER_PATH, 'audio');
+    bridge = startBridge(BRIDGE_PATH);
     refreshRecentApps();
     getInstalledApps(); // préchargées : la recherche répond tout de suite
     setupUpdates();
@@ -1032,8 +1053,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true;
-    mediaHelper?.process?.stdin.end();
-    audioHelper?.process?.stdin.end();
+    bridge?.process?.stdin.end();
   });
   app.on('will-quit', () => globalShortcut.unregisterAll());
   // Le widget vit dans la barre des tâches : on ne quitte pas quand la fenêtre est cachée.

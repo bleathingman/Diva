@@ -1,13 +1,10 @@
-﻿# Pont entre Diva et le mélangeur de volume de Windows (Core Audio).
-# - Écrit sur stdout une ligne JSON à chaque changement :
+﻿# Module volume de bridge.ps1 : le mélangeur de volume de Windows (Core Audio).
+# - Get-AudioMessages écrit un message à chaque changement :
 #   { type: 'audio', master, muted, apps: [{ id, name, path, volume, muted, active }],
 #     outputs: [{ id, name, isDefault }] }
-# - Lit sur stdin des commandes, une par ligne :
+# - Invoke-AudioCommand exécute :
 #   master <0-100> | mute <0|1> | app <0-100> <id> | appmute <0|1> <id> | output <id>
 #   (id = nom du processus, ex. "Spotify" ; toutes ses sessions audio sont réglées ensemble)
-
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
 
 # Les interfaces COM de Core Audio ne sont pas exposées à .NET : on les déclare.
 # Seul l'ordre des méthodes compte ; celles qu'on n'appelle jamais sont des emplacements vides.
@@ -312,8 +309,13 @@ namespace DivaAudio {
 }
 '@
 
-function Send-AudioCommand([string]$line) {
+function Invoke-AudioCommand([string]$line) {
     $command, $value, $id = $line -split ' ', 3
+    # Volume ou interrupteur absent ou invalide : on ne fait rien ([int]'' vaudrait 0, le son serait coupé).
+    if ($command -in 'master', 'app' -and $value -notmatch '^\d{1,3}$') { return }
+    if ($command -in 'mute', 'appmute' -and $value -notmatch '^[01]$') { return }
+    if ($command -in 'app', 'appmute' -and -not $id) { return }
+    if ($command -eq 'output' -and -not $value) { return }
     switch ($command) {
         'master'  { [DivaAudio.Mixer]::SetMaster([int]$value) }
         'mute'    { [DivaAudio.Mixer]::SetMuted($value -eq '1') }
@@ -326,20 +328,11 @@ function Send-AudioCommand([string]$line) {
     }
 }
 
-$stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput())
-$pendingLine = $stdin.ReadLineAsync()
-$lastJson = ''
+$lastAudioJson = ''
 $outputs = $null
-$tick = 0
+$audioTick = 0
 
-while ($true) {
-    while ($pendingLine.IsCompleted) {
-        $line = $pendingLine.Result
-        if ($null -eq $line) { exit 0 }  # Diva s'est fermée
-        try { Send-AudioCommand $line.Trim() } catch { [Console]::Error.WriteLine($_.Exception.Message) }
-        $pendingLine = $stdin.ReadLineAsync()
-    }
-
+function Get-AudioMessages {
     try {
         # Apps actives d'abord, puis par nom ; on ne garde pas Diva elle-même.
         $apps = [DivaAudio.Mixer]::GetApps() |
@@ -348,28 +341,26 @@ while ($true) {
             ForEach-Object {
                 [ordered]@{ id = $_.Id; name = $_.Name; path = $_.Path; volume = $_.Volume; muted = $_.Muted; active = $_.Active }
             }
-        # Les sorties changent rarement : relues toutes les 2 s (ou tout de suite après un changement).
-        if ($null -eq $outputs -or $tick % 7 -eq 0) {
-            $outputs = @([DivaAudio.Mixer]::GetOutputs() | ForEach-Object {
+        # Les sorties changent rarement : relues un tour sur 5 (ou tout de suite après un changement).
+        if ($null -eq $script:outputs -or $script:audioTick % 5 -eq 0) {
+            $script:outputs = @([DivaAudio.Mixer]::GetOutputs() | ForEach-Object {
                 [ordered]@{ id = $_.Id; name = $_.Name; isDefault = $_.IsDefault }
             })
         }
-        $tick++
+        $script:audioTick++
         $state = [ordered]@{
             type    = 'audio'
             master  = [DivaAudio.Mixer]::GetMaster()
             muted   = [DivaAudio.Mixer]::GetMuted()
             apps    = @($apps)
-            outputs = $outputs
+            outputs = $script:outputs
         }
         $json = ConvertTo-Json -InputObject $state -Compress -Depth 4
-        if ($json -ne $lastJson) {
-            [Console]::Out.WriteLine($json)
-            [Console]::Out.Flush()
-            $lastJson = $json
+        if ($json -ne $script:lastAudioJson) {
+            Write-Message 'audio' $state
+            $script:lastAudioJson = $json
         }
     } catch {
         # Pas de périphérique de sortie (casque débranché...) : on retente au tour suivant.
     }
-    Start-Sleep -Milliseconds 300
 }

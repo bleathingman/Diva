@@ -1,10 +1,7 @@
-﻿# Pont entre Diva et le contrôle média de Windows (le même que le mini-lecteur du volume).
-# - Écrit sur stdout une ligne JSON à chaque changement : morceau, artiste, état, pochette.
-# - Lit sur stdin des commandes, une par ligne : toggle | next | prev
+﻿# Module média de bridge.ps1 : le contrôle média de Windows (le même que le mini-lecteur du volume).
+# - Get-MediaMessages écrit un message à chaque changement : morceau, artiste, état, pochette.
+# - Invoke-MediaCommand exécute : toggle | next | prev | seek <ms>
 # Fonctionne avec toute app qui s'enregistre auprès de Windows (Spotify, navigateurs, ...).
-
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]
@@ -44,7 +41,8 @@ function Get-Thumbnail($props) {
     }
 }
 
-function Send-MediaCommand($session, [string]$line) {
+function Invoke-MediaCommand([string]$line) {
+    $session = $manager.GetCurrentSession()
     if (-not $session) { return }
     $command, $argument = $line -split ' ', 2
     switch ($command) {
@@ -56,26 +54,11 @@ function Send-MediaCommand($session, [string]$line) {
     }
 }
 
-function Write-Message($message) {
-    [Console]::Out.WriteLine(($message | ConvertTo-Json -Compress))
-    [Console]::Out.Flush()
-}
-
-$stdin = New-Object System.IO.StreamReader([Console]::OpenStandardInput())
-$pendingLine = $stdin.ReadLineAsync()
-$lastJson = ''
+$lastMediaJson = ''
 $lastTrackKey = $null
 
-while ($true) {
+function Get-MediaMessages {
     $session = $manager.GetCurrentSession()
-
-    while ($pendingLine.IsCompleted) {
-        $line = $pendingLine.Result
-        if ($null -eq $line) { exit 0 }  # Diva s'est fermée
-        Send-MediaCommand $session $line.Trim()
-        $pendingLine = $stdin.ReadLineAsync()
-    }
-
     $state = @{ type = 'media'; active = $false }
     $trackKey = ''
     if ($session) {
@@ -105,18 +88,16 @@ while ($true) {
     }
 
     # La pochette (~100 Ko) part dans son propre message, seulement quand le morceau change.
-    if ($trackKey -ne $lastTrackKey) {
+    if ($trackKey -ne $script:lastTrackKey) {
         # Sans morceau : $null explicite (un $() vide deviendrait un objet {} en JSON).
         $data = if ($trackKey) { Get-Thumbnail $props } else { $null }
-        Write-Message @{ type = 'thumbnail'; data = $data }
-        $lastTrackKey = $trackKey
+        Write-Message 'media' @{ type = 'thumbnail'; data = $data }
+        $script:lastTrackKey = $trackKey
     }
 
     $json = $state | ConvertTo-Json -Compress
-    if ($json -ne $lastJson) {
-        [Console]::Out.WriteLine($json)
-        [Console]::Out.Flush()
-        $lastJson = $json
+    if ($json -ne $script:lastMediaJson) {
+        Write-Message 'media' $state
+        $script:lastMediaJson = $json
     }
-    Start-Sleep -Milliseconds 400
 }

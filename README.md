@@ -130,8 +130,9 @@ src/
 ├── default-config.json
 └── renderer/          # l'interface du widget (HTML/CSS/JS)
 helpers/
-├── media.ps1          # pont avec le contrôle média de Windows (titre, pochette, lecture, position)
-├── audio.ps1          # pont avec le mélangeur de volume de Windows (Core Audio)
+├── bridge.ps1         # pont permanent avec Windows (un seul processus) : charge media.ps1 et audio.ps1
+├── media.ps1          # module : contrôle média de Windows (titre, pochette, lecture, position)
+├── audio.ps1          # module : mélangeur de volume de Windows (Core Audio), sorties audio
 ├── recent-apps.ps1    # apps les plus lancées, d'après l'historique UserAssist de Windows
 ├── installed-apps.ps1 # toutes les apps installées (pour « Ajouter une app »)
 └── common.ps1         # fonctions partagées par les deux scripts d'apps

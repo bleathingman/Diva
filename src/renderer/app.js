@@ -636,7 +636,7 @@ function stopCapture() {
 }
 
 function updateVisualizer() {
-  const wanted = visualizerEnabled && media.playing && !document.hidden && sectionShown('media') && !layout.miniMedia;
+  const wanted = visualizerEnabled && media.playing && windowVisible && sectionShown('media') && !layout.miniMedia;
   if (wanted) {
     clearTimeout(captureStopTimer);
     captureStopTimer = null;
@@ -682,7 +682,13 @@ function drawVisualizer() {
   });
 }
 
-document.addEventListener('visibilitychange', updateVisualizer);
+// Fenêtre cachée (raccourci, ×, clic ailleurs) : signalé par le processus principal,
+// l'événement visibilitychange de Chromium n'arrivant pas toujours.
+let windowVisible = true;
+window.diva.onVisibility((visible) => {
+  windowVisible = visible;
+  updateVisualizer();
+});
 
 // --- Captures d'écran ---
 
@@ -1217,7 +1223,8 @@ window.diva.onGrid(renderGrid);
 window.diva.onOpenSettings(() => showView('settings'));
 window.diva.onMedia(renderMedia);
 window.diva.onAudio(renderAudio);
-setInterval(renderProgress, 250);
+// Widget caché : rien à rafraîchir (la musique et le minuteur continuent ailleurs).
+setInterval(() => windowVisible && renderProgress(), 250);
 window.diva.onToast(toast);
 window.diva.getGrid().then(renderGrid);
 window.diva.onWindowSettings(renderWindowSettings);
@@ -1235,7 +1242,7 @@ window.diva.onTimerDone(({ title, body }) => {
   chime();
   toast(`${title} · ${body}`);
 });
-setInterval(renderTimer, 250);
+setInterval(() => windowVisible && renderTimer(), 250);
 
 // Opacité au repos : le processus principal repasse à 100 % tant que la souris est dessus.
 document.documentElement.addEventListener('mouseenter', () => window.diva.hover(true));
