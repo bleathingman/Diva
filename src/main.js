@@ -1,22 +1,21 @@
+// Processus principal : config, grille d'apps, liens, recherche, et le lien entre l'interface
+// et les modules (widgets, pont Windows, Spotify, captures, minuteur, mises à jour).
 const {
-  app, BrowserWindow, Tray, Menu, Notification, clipboard, nativeTheme, desktopCapturer, dialog, globalShortcut, ipcMain, net,
-  session, shell, screen, nativeImage,
+  app, BrowserWindow, Tray, Menu, Notification, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain,
+  session, shell, nativeImage,
 } = require('electron');
 const { spawn, execFile } = require('child_process');
-const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const readline = require('readline');
+const { expandEnv, isUri, isPathLike, normalize, defaultLinkName, parseLinkTarget } = require('./paths');
+const { getAppIcon, fetchFavicon } = require('./icons');
+const { createWidgets } = require('./windows');
+const { createBridge } = require('./bridge');
+const { createUpdates } = require('./updates');
 const { createSpotify, REDIRECT_URI } = require('./spotify');
 const { createCaptures } = require('./captures');
 const { createTimer } = require('./timer');
-const { autoUpdater } = require('electron-updater');
 
-const WIDTH = 300; // largeur à l'échelle 1 ; l'interface est toujours dessinée sur cette base
-const MIN_SCALE = 0.75;
-const MAX_SCALE = 1.6;
-const SNAP_DISTANCE = 32;
-const SNAP_GAP = 8;
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const DEFAULT_CONFIG_PATH = path.join(__dirname, 'default-config.json');
 // Dans l'app installée, le code est dans l'archive app.asar que PowerShell ne sait pas lire :
@@ -26,28 +25,24 @@ const BRIDGE_PATH = path.join(HELPERS_DIR, 'bridge.ps1');
 const RECENT_APPS_PATH = path.join(HELPERS_DIR, 'recent-apps.ps1');
 const INSTALLED_APPS_PATH = path.join(HELPERS_DIR, 'installed-apps.ps1');
 const RECENT_REFRESH_MS = 10 * 60 * 1000;
-const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
 
-let win = null;
+let win = null; // widget principal
+let widgets = null; // src/windows.js : le principal et les widgets détachés
 let tray = null;
 let config = null;
-let bridge = null; // helpers/bridge.ps1 : média et volume dans un seul processus
-const lastHelperMessages = new Map(); // "canal:type" -> dernier message des modules média/volume
+let bridge = null; // src/bridge.js : média et volume dans un seul processus PowerShell
+let updates = null; // src/updates.js
 let recentApps = [];
 let recentRefreshedAt = 0;
 let installedApps = null; // promesse gardée en cache, la liste change rarement
 let installedList = [];
 let lastSavedConfig = '';
 let quitting = false;
-let currentScale = 1;
-let resizeDrag = null;
-const detachedWindows = new Map(); // section détachée -> sa fenêtre
 let spotify = null;
 let captures = null;
 let timer = null;
 let blurGuard = false; // vrai pendant un menu ou une boîte de dialogue : la perte de focus est normale
 let hiddenByBlurAt = 0;
-let updateReady = null; // version téléchargée, installée au prochain redémarrage
 
 // --- Fichiers utilisateur (%APPDATA%\Diva) -------------------------------------------
 
@@ -94,7 +89,7 @@ function applyConfig() {
   const previousHotkey = config?.hotkey;
   const previousDays = gridSettings().recentDays;
   config = loadConfig();
-  applyWindowSettings();
+  widgets.applySettings();
   if (config.hotkey !== previousHotkey) registerHotkey(previousHotkey);
   sendGrid();
   if (gridSettings().recentDays !== previousDays) refreshRecentApps();
@@ -107,11 +102,6 @@ function saveConfig() {
 }
 
 // --- Lancement d'apps ----------------------------------------------------------------
-
-const expandEnv = (value) => value.replace(/%([^%]+)%/g, (match, name) => process.env[name] ?? match);
-
-// "spotify:" ou "https://..." sont des liens ; "C:\..." est un chemin (lettre de lecteur).
-const isUri = (value) => /^[a-z][a-z0-9+.-]+:/i.test(value) && !/^[a-z]:[\\/]/i.test(value);
 
 async function openTarget(target) {
   const expanded = expandEnv(target);
@@ -128,9 +118,6 @@ async function openTarget(target) {
   return error || null;
 }
 
-// Même règle que recent-apps.ps1 : "Visual Studio Code" et "visual-studio code" sont la même app.
-const normalize = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
-
 // Les apps de la config passent en premier : elles gardent leur emoji et leur chemin.
 function findApp(name) {
   const id = normalize(name);
@@ -142,42 +129,6 @@ async function launchApp(name) {
   if (!entry) return `App inconnue : ${name}`;
   const error = await openTarget(entry.open);
   return error ? `${entry.name} : ${error}` : null;
-}
-
-// Pour un raccourci .lnk, Windows renverrait l'icône générique « fichier + flèche » :
-// on prend l'icône déclarée par le raccourci, ou à défaut celle de sa cible.
-function resolveIconSource(file) {
-  if (!file.toLowerCase().endsWith('.lnk')) return file;
-  try {
-    const link = shell.readShortcutLink(file);
-    // Les outils Windows déclarent souvent "%SystemRoot%\...\x.dll" : variable à remplacer,
-    // et une .dll ne donne pas la bonne icône (il faudrait son index) : on prend alors la cible.
-    const icon = link.icon && expandEnv(link.icon);
-    if (icon && !/\.dll$/i.test(icon) && fs.existsSync(icon)) return icon;
-    return link.target ? expandEnv(link.target) : file;
-  } catch {
-    return file;
-  }
-}
-
-// Reçoit l'app telle que l'interface l'affiche ({ open, iconFile }) : ça marche aussi
-// pour les apps installées pas encore épinglées.
-async function getAppIcon({ open, iconFile } = {}) {
-  if (typeof iconFile === 'string' && iconFile) {
-    const image = nativeImage.createFromPath(iconFile);
-    return image.isEmpty() ? null : image.toDataURL();
-  }
-  if (typeof open !== 'string' || isUri(expandEnv(open))) return null;
-  try {
-    const source = resolveIconSource(expandEnv(open));
-    // Un .ico se charge tel quel ; getFileIcon donnerait l'icône du type de fichier.
-    const icon = source.toLowerCase().endsWith('.ico')
-      ? nativeImage.createFromPath(source).resize({ width: 64, height: 64 })
-      : await app.getFileIcon(source, { size: 'large' });
-    return icon.isEmpty() ? null : icon.toDataURL();
-  } catch {
-    return null;
-  }
 }
 
 // --- Grille d'apps : épinglées puis récentes --------------------------------------
@@ -238,8 +189,8 @@ function updateSection(section, patch) {
   }[section]();
   config = { ...config, [section]: { ...current, ...allowed } };
   saveConfig();
-  if (section === 'window') applyWindowSettings();
-  if (section === 'layout') syncDetachedWindows();
+  if (section === 'window') widgets.applySettings();
+  if (section === 'layout') widgets.sync();
 }
 
 const updateGrid = (patch) => updateSection('grid', patch);
@@ -268,9 +219,7 @@ function withCurrentIcon(entry) {
 }
 
 // Tous les widgets reçoivent les mêmes données ; chacun n'affiche que ses sections.
-function broadcast(channel, payload) {
-  for (const window of allWindows()) window.webContents.send(channel, payload);
-}
+const broadcast = (channel, payload) => widgets?.broadcast(channel, payload);
 
 function sendGrid() {
   broadcast('grid', buildGrid());
@@ -290,98 +239,19 @@ function pinApp({ name, open, iconFile }) {
 
 // --- Liens favoris : un site ou un dossier épinglé comme une app ---
 
-const isPathLike = (value) => /^([a-z]:[\\/]|\\\\|%)/i.test(value);
-
-// Noms d'exécutables qui ne disent rien du programme (même liste que recent-apps.ps1).
-const GENERIC_EXE_NAMES = ['game', 'launcher', 'start', 'play', 'main', 'nw', 'nwjs', 'electron', 'unity'];
-
-function defaultLinkName(open) {
-  if (isPathLike(open)) {
-    const file = expandEnv(open).replace(/[\\/]+$/, '');
-    // Pour une app on retire l'extension ; "Game.exe" -> nom du dossier qui le contient.
-    const name = /\.(exe|lnk|url|bat|cmd)$/i.test(file) ? path.parse(file).name : path.basename(file);
-    if (GENERIC_EXE_NAMES.includes(name.toLowerCase())) return path.basename(path.dirname(file));
-    return name || open;
-  }
-  try {
-    return new URL(open).hostname.replace(/^www\./, '') || open;
-  } catch {
-    return open;
-  }
-}
-
 // Renvoie un message d'erreur, ou null si le lien est épinglé.
 function addLink({ name, target } = {}) {
-  // Sans caractères de contrôle ni guillemets (ceux du « Copier en tant que chemin » de Windows).
-  let open = String(target ?? '').replace(/[\u0000-\u001f]/g, '').trim().replace(/^"(.*)"$/, '$1');
-  if (!open) return 'Indique une adresse ou un dossier';
-  if (isPathLike(open)) {
-    if (!fs.existsSync(expandEnv(open))) return 'Dossier ou fichier introuvable';
-  } else {
-    // "youtube.com" tout court : on suppose un site web. Un protocole fait au moins 2 lettres
-    // ("C:" est un lecteur, pas un protocole).
-    if (!/^[a-z][a-z0-9+.-]+:/i.test(open)) open = `https://${open}`;
-    try {
-      new URL(open);
-    } catch {
-      return 'Adresse invalide';
-    }
-  }
+  const { open, error } = parseLinkTarget(target, fs.existsSync);
+  if (error) return error;
   const label = String(name ?? '').trim() || defaultLinkName(open);
   if (gridSettings().pinned.some(sameApp(label))) return `« ${label} » est déjà épinglé`;
   pinApp({ name: label, open });
   if (/^https?:/i.test(open)) {
-    fetchFavicon(open).then((iconFile) => {
+    fetchFavicon(open, userFile('icons')).then((iconFile) => {
       if (!iconFile) return;
       const { pinned } = gridSettings();
       updateGrid({ pinned: pinned.map((entry) => (sameApp(label)(entry) ? { ...entry, iconFile } : entry)) });
     });
-  }
-  return null;
-}
-
-// Icône d'un site : d'abord celles déclarées dans la page (apple-touch-icon, la plus nette),
-// puis /favicon.ico. Enregistrée en PNG dans %APPDATA%\Diva\icons.
-async function fetchFavicon(pageUrl) {
-  const { origin } = new URL(pageUrl);
-  const candidates = [];
-  try {
-    const html = await (await net.fetch(pageUrl)).text();
-    for (const [tag] of html.matchAll(/<link\b[^>]*>/gi)) {
-      const rel = /\brel=["']?([^"'>]+)/i.exec(tag)?.[1].toLowerCase() ?? '';
-      const href = /\bhref=["']?([^"'\s>]+)/i.exec(tag)?.[1];
-      if (!href || !rel.includes('icon') || /\.svg(\?|$)/i.test(href)) continue;
-      candidates.push({ url: new URL(href, pageUrl).href, rank: rel.includes('apple-touch') ? 0 : 1 });
-    }
-  } catch {
-    // Page inaccessible : on tente quand même /favicon.ico.
-  }
-  candidates.sort((a, b) => a.rank - b.rank);
-  candidates.push({ url: `${origin}/favicon.ico` });
-
-  const folder = userFile('icons');
-  fs.mkdirSync(folder, { recursive: true });
-  const file = path.join(folder, `${crypto.createHash('md5').update(origin).digest('hex').slice(0, 12)}.png`);
-  for (const { url } of candidates) {
-    try {
-      const response = await net.fetch(url);
-      if (!response.ok) continue;
-      const buffer = Buffer.from(await response.arrayBuffer());
-      let image = nativeImage.createFromBuffer(buffer);
-      if (image.isEmpty()) {
-        // Les .ico ne se lisent que depuis un fichier.
-        const ico = `${file}.ico`;
-        fs.writeFileSync(ico, buffer);
-        image = nativeImage.createFromPath(ico);
-        fs.rmSync(ico, { force: true });
-      }
-      if (image.isEmpty()) continue;
-      if (image.getSize().width > 64) image = image.resize({ width: 64, height: 64, quality: 'best' });
-      fs.writeFileSync(file, image.toPNG());
-      return file;
-    } catch {
-      // Candidat suivant.
-    }
   }
   return null;
 }
@@ -581,48 +451,6 @@ function timerFinished(title, body) {
   win.webContents.send('timer-done', { title, body });
 }
 
-// --- Mises à jour automatiques (GitHub Releases) -------------------------------------
-
-// L'app installée regarde la dernière release de github.com/bleathingman/Diva : si elle est plus
-// récente, elle la télécharge en arrière-plan puis l'installe au prochain redémarrage de Diva.
-function setupUpdates() {
-  if (!app.isPackaged) return;
-  autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('update-downloaded', ({ version }) => {
-    updateReady = version;
-    win.webContents.send('update', updateStatus());
-    refreshTrayMenu();
-  });
-  autoUpdater.on('error', (error) => console.error('[mises à jour]', error.message));
-  checkForUpdates();
-  setInterval(checkForUpdates, UPDATE_CHECK_MS);
-}
-
-// Renvoie un message pour les réglages.
-async function checkForUpdates() {
-  if (!app.isPackaged) return 'Pas de mise à jour en mode développement';
-  if (updateReady) return `Version ${updateReady} prête`;
-  try {
-    const result = await autoUpdater.checkForUpdates();
-    const latest = result?.updateInfo?.version;
-    return latest && latest !== app.getVersion() ? `Téléchargement de la ${latest}…` : 'Diva est à jour';
-  } catch (error) {
-    if (/No published versions/i.test(error.message)) return 'Aucune version publiée sur GitHub pour l\'instant';
-    return `Vérification impossible : ${error.message}`;
-  }
-}
-
-function updateStatus() {
-  return { version: app.getVersion(), ready: updateReady };
-}
-
-function installUpdate() {
-  if (!updateReady) return;
-  quitting = true;
-  autoUpdater.quitAndInstall(true, true); // installation silencieuse, puis Diva se relance
-}
-
 // --- Son du système pour le visualiseur ---------------------------------------------
 
 // getDisplayMedia() ne demande rien à l'utilisateur : on répond à sa place avec la capture
@@ -635,256 +463,38 @@ function allowSystemAudioCapture() {
   });
 }
 
-// --- Pont permanent avec Windows : média et volume (helpers/bridge.ps1) -------------
+// --- Pont permanent avec Windows (src/bridge.js) -----------------------------------
 
-// Lance le script PowerShell qui tourne en continu : chaque ligne JSON qu'il écrit part vers
-// l'interface sur son canal (media, audio), et send() lui transmet une commande.
-// Relancé s'il s'arrête.
-function startBridge(script) {
-  const helper = {
-    process: null,
-    send: (command) => helper.process?.stdin.write(`${String(command).replace(/[\r\n]/g, ' ')}\n`),
-  };
-  const start = () => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script],
-      { windowsHide: true });
-    helper.process = child;
-    updatePace(); // un pont relancé repart au rythme rapide : on lui redonne le bon
-    readline.createInterface({ input: child.stdout }).on('line', (line) => {
-      let message;
-      try {
-        message = JSON.parse(line);
-      } catch {
-        return; // ligne parasite (avertissement PowerShell...)
-      }
-      // Les modules n'écrivent que les changements : on garde le dernier message de chaque
-      // type pour le donner aux fenêtres ouvertes après coup (widget détaché, rechargement).
-      const { channel } = message;
-      lastHelperMessages.set(`${channel}:${message.type}`, { channel, message });
-      broadcast(channel, message);
-    });
-    child.stderr.on('data', (data) => console.error('[bridge]', data.toString()));
-    child.on('exit', () => {
-      helper.process = null;
-      if (!quitting) setTimeout(start, 2000);
-    });
-  };
-  start();
-  return helper;
-}
-
-// Aucun widget visible : le pont espace ses relevés (2 s au lieu de 0,4 s), il n'y a
-// personne pour voir la musique ou le volume bouger.
+// Aucun widget visible : le pont espace ses relevés, personne ne voit la musique bouger.
 function updatePace() {
-  const visible = allWindows().some((window) => window.isVisible());
-  bridge?.send(`pace ${visible ? 'fast' : 'slow'}`);
+  bridge?.setVisible(widgets.all().some((window) => window.isVisible()));
 }
 
 // --- Fenêtre, barre des tâches, raccourci --------------------------------------------
 
-function defaultPosition() {
-  const { workArea } = screen.getPrimaryDisplay();
-  return { x: workArea.x + workArea.width - WIDTH - SNAP_GAP, y: workArea.y + SNAP_GAP };
-}
-
-const allWindows = () => [win, ...detachedWindows.values()].filter((window) => window && !window.isDestroyed());
 const windowOf = (event) => BrowserWindow.fromWebContents(event.sender);
 
-function isOnScreen(position) {
-  return position?.x !== undefined && screen.getAllDisplays().some(({ workArea: a }) =>
-    position.x >= a.x && position.x < a.x + a.width && position.y >= a.y && position.y < a.y + a.height);
-}
-
-// state.json : { x, y } du widget principal, et { detached: { section: { x, y } } }.
-function savePosition(window) {
-  const state = readJson(userFile('state.json'), {});
-  const [x, y] = window.getPosition();
-  if (window === win) Object.assign(state, { x, y });
-  else state.detached = { ...state.detached, [window.diva.section]: { x, y } };
-  fs.writeFileSync(userFile('state.json'), JSON.stringify(state));
-}
-
-// Un widget : le principal (section null) ou une section détachée (index.html?section=...).
-function createWidgetWindow(section, { x, y }) {
-  const window = new BrowserWindow({
-    x, y,
-    width: Math.round(WIDTH * currentScale),
-    height: 200,
-    frame: false,
-    transparent: true,
-    resizable: false,
-    skipTaskbar: true,
-    alwaysOnTop: windowSettings().alwaysOnTop,
-    show: false,
-    icon: ICON_PATH,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      sandbox: true,
-      zoomFactor: currentScale,
-    },
-  });
-  // Propre à chaque fenêtre : souris dessus (opacité) et hauteur demandée par l'interface.
-  window.diva = { section, hovered: false, contentHeight: 200 };
-  window.loadFile(path.join(__dirname, 'renderer', 'index.html'), section ? { query: { section } } : {});
-  window.webContents.on('did-finish-load', () => {
-    for (const { channel, message } of lastHelperMessages.values()) window.webContents.send(channel, message);
-  });
-  window.once('ready-to-show', () => {
-    applyWindowSettings();
-    if (section) window.showInactive();
-    else window.show();
-  });
-  // Chromium ne signale pas toujours à la page qu'Electron l'a cachée : on la prévient.
-  window.on('show', () => {
-    updatePace();
-    window.webContents.send('visibility', true);
-  });
-  window.on('hide', () => {
-    updatePace();
-    window.webContents.send('visibility', false);
-  });
-  window.on('moved', () => {
-    if (windowSettings().snapToEdges) snapToEdges(window);
-    savePosition(window);
-  });
-  return window;
-}
-
 function createWindow() {
-  const saved = readJson(userFile('state.json'), {});
-  currentScale = clampScale(windowSettings().scale);
-  win = createWidgetWindow(null, isOnScreen(saved) ? saved : defaultPosition());
+  widgets = createWidgets({
+    stateFile: userFile('state.json'),
+    page: path.join(__dirname, 'renderer', 'index.html'),
+    preload: path.join(__dirname, 'preload.js'),
+    icon: ICON_PATH,
+    getSettings: windowSettings,
+    getDetached: () => layoutSettings().detached,
+    // Une page (re)chargée reçoit tout de suite le dernier état de la musique et du volume.
+    onLoaded: (window) => {
+      for (const { channel, message } of bridge?.lastMessages() ?? []) window.webContents.send(channel, message);
+    },
+    onVisibility: updatePace,
+    onScaleChosen: (scale) => updateSection('window', { scale }),
+  });
+  win = widgets.createMain();
   win.on('blur', () => {
     if (blurGuard || !windowSettings().hideOnBlur) return;
     win.hide();
     hiddenByBlurAt = Date.now();
   });
-  syncDetachedWindows();
-}
-
-// Ouvre ou ferme les widgets détachés pour coller à la disposition.
-function syncDetachedWindows() {
-  const { detached } = layoutSettings();
-  for (const [section, window] of detachedWindows) {
-    if (detached.includes(section)) continue;
-    window.destroy();
-    detachedWindows.delete(section);
-    updatePace();
-  }
-  const saved = readJson(userFile('state.json'), {}).detached ?? {};
-  for (const section of detached) {
-    if (detachedWindows.has(section)) continue;
-    detachedWindows.set(section, createWidgetWindow(section, isOnScreen(saved[section]) ? saved[section] : besideMainWindow()));
-  }
-}
-
-// Premier détachement : juste à gauche du widget principal (ou à droite s'il n'y a pas la place).
-function besideMainWindow() {
-  const bounds = win.getBounds();
-  const area = screen.getDisplayMatching(bounds).workArea;
-  const width = Math.round(WIDTH * currentScale);
-  const x = bounds.x - width - SNAP_GAP >= area.x ? bounds.x - width - SNAP_GAP : bounds.x + bounds.width + SNAP_GAP;
-  return { x, y: bounds.y + detachedWindows.size * 40 };
-}
-
-function applyWindowSettings() {
-  if (!win) return;
-  const settings = windowSettings();
-  // « system » suit le mode clair/sombre de Windows ; le CSS lit prefers-color-scheme.
-  nativeTheme.themeSource = ['dark', 'light', 'system'].includes(settings.theme) ? settings.theme : 'dark';
-  // Opacité réglée au repos, pleine quand la souris est dessus.
-  const opacity = Math.min(100, Math.max(30, Number(settings.idleOpacity) || 100));
-  const scale = clampScale(settings.scale);
-  const rescale = Math.abs(scale - currentScale) > 0.001;
-  if (rescale) currentScale = scale;
-  for (const window of allWindows()) {
-    window.setAlwaysOnTop(settings.alwaysOnTop);
-    window.setOpacity(window.diva.hovered ? 1 : opacity / 100);
-    if (rescale) applyScale(window, stuckToRight(window));
-  }
-  broadcast('window-settings', settings);
-}
-
-// --- Taille : tout le widget est mis à l'échelle (zoom), la mise en page ne change pas ---
-
-const clampScale = (scale) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, Number(scale) || 1));
-
-function stuckToRight(window) {
-  const bounds = window.getBounds();
-  const area = screen.getDisplayMatching(bounds).workArea;
-  return Math.abs(bounds.x + bounds.width - (area.x + area.width - SNAP_GAP)) <= 1;
-}
-
-// Applique currentScale à une fenêtre. anchorRight : son bord droit reste en place
-// (poignée de gauche, ou widget collé à droite de l'écran).
-function applyScale(window, anchorRight = false) {
-  const bounds = window.getBounds();
-  window.webContents.setZoomFactor(currentScale);
-  const width = Math.round(WIDTH * currentScale);
-  const x = anchorRight ? bounds.x + bounds.width - width : bounds.x;
-  window.setBounds({ x, y: bounds.y, width, height: bounds.height });
-  // La mise en page ne change pas de taille, l'interface ne redemandera pas de hauteur.
-  resizeWindow(window, window.diva.contentHeight);
-}
-
-// L'échelle est commune à tous les widgets ; celui qu'on tire garde le côté opposé fixe.
-function setScale(scale, dragged = null) {
-  currentScale = scale;
-  for (const window of allWindows()) {
-    applyScale(window, window === dragged?.window ? dragged.side === 'left' : stuckToRight(window));
-  }
-}
-
-// Poignées des coins du bas : la largeur suit la souris, l'échelle suit la largeur.
-function startResizeDrag(window, side) {
-  resizeDrag = { window, side, cursorX: screen.getCursorScreenPoint().x, width: window.getBounds().width };
-}
-
-function moveResizeDrag() {
-  if (!resizeDrag) return;
-  const delta = screen.getCursorScreenPoint().x - resizeDrag.cursorX;
-  const width = resizeDrag.width + (resizeDrag.side === 'left' ? -delta : delta);
-  const scale = clampScale(width / WIDTH);
-  if (Math.abs(scale - currentScale) > 0.002) setScale(scale, resizeDrag);
-}
-
-function endResizeDrag() {
-  if (!resizeDrag) return;
-  const scale = Math.round(currentScale * 100) / 100;
-  setScale(scale, resizeDrag);
-  resizeDrag = null;
-  updateSection('window', { scale });
-}
-
-// Lâché à moins de SNAP_DISTANCE d'un bord de l'écran : le widget s'y colle, à SNAP_GAP du bord.
-function snapToEdges(window) {
-  const bounds = window.getBounds();
-  const area = screen.getDisplayMatching(bounds).workArea;
-  let { x, y } = bounds;
-  const left = area.x + SNAP_GAP;
-  const top = area.y + SNAP_GAP;
-  const right = area.x + area.width - bounds.width - SNAP_GAP;
-  const bottom = area.y + area.height - bounds.height - SNAP_GAP;
-  if (Math.abs(x - left) < SNAP_DISTANCE) x = left;
-  else if (Math.abs(x - right) < SNAP_DISTANCE) x = right;
-  if (Math.abs(y - top) < SNAP_DISTANCE) y = top;
-  else if (Math.abs(y - bottom) < SNAP_DISTANCE) y = bottom;
-  if (x !== bounds.x || y !== bounds.y) window.setPosition(x, y);
-}
-
-// Change la hauteur sans sortir de l'écran ; collé en bas, le widget grandit vers le haut.
-// `height` est en pixels d'interface : on applique l'échelle.
-function resizeWindow(window, height) {
-  window.diva.contentHeight = height;
-  const bounds = window.getBounds();
-  const area = screen.getDisplayMatching(bounds).workArea;
-  const newHeight = Math.min(Math.ceil(height * currentScale), area.height);
-  const areaBottom = area.y + area.height;
-  const stuckToBottom = Math.abs(bounds.y + bounds.height - (areaBottom - SNAP_GAP)) <= 1;
-  let y = stuckToBottom ? areaBottom - SNAP_GAP - newHeight : bounds.y;
-  y = Math.max(area.y, Math.min(y, areaBottom - newHeight));
-  window.setBounds({ x: bounds.x, y, width: Math.round(WIDTH * currentScale), height: newHeight });
 }
 
 function toggleWindow() {
@@ -923,8 +533,8 @@ function createTray() {
 
 function refreshTrayMenu() {
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: `Installer Diva ${updateReady} et redémarrer`, visible: Boolean(updateReady), click: installUpdate },
-    { type: 'separator', visible: Boolean(updateReady) },
+    { label: `Installer Diva ${updates?.ready()} et redémarrer`, visible: Boolean(updates?.ready()), click: () => updates.install() },
+    { type: 'separator', visible: Boolean(updates?.ready()) },
     { label: 'Afficher / masquer', click: toggleWindow },
     { label: 'Modifier la config', click: () => shell.openPath(userFile('config.json')) },
     {
@@ -955,9 +565,9 @@ ipcMain.on('capture-open', (_event, file) => captures.find(String(file)) && shel
 ipcMain.on('capture-menu', (event, file) => showCaptureMenu(String(file), windowOf(event)));
 ipcMain.on('update-captures', (_event, patch) => updateSection('captures', patch));
 ipcMain.handle('get-layout', () => layoutSettings());
-ipcMain.handle('get-update', () => updateStatus());
-ipcMain.handle('check-updates', () => checkForUpdates());
-ipcMain.on('install-update', () => installUpdate());
+ipcMain.handle('get-update', () => updates.status());
+ipcMain.handle('check-updates', () => updates.check());
+ipcMain.on('install-update', () => updates.install());
 ipcMain.on('update-layout', (_event, patch) => updateSection('layout', patch));
 // Le × d'un widget détaché le rattache au widget principal.
 ipcMain.on('attach-section', (_event, section) => {
@@ -987,27 +597,17 @@ ipcMain.handle('open-entry', (_event, entry) => openEntry(entry));
 ipcMain.handle('get-app-icon', (_event, entry) => getAppIcon(entry));
 ipcMain.on('update-grid', (_event, patch) => updateGrid(patch));
 ipcMain.on('update-window', (_event, patch) => updateSection('window', patch));
-ipcMain.on('preview-opacity', (_event, value) => {
-  for (const window of allWindows()) window.setOpacity(Math.min(100, Math.max(30, Number(value) || 100)) / 100);
-});
-ipcMain.on('hover', (event, isHovered) => {
-  const window = windowOf(event);
-  if (!window?.diva) return;
-  window.diva.hovered = Boolean(isHovered);
-  applyWindowSettings();
-});
+ipcMain.on('preview-opacity', (_event, value) => widgets.previewOpacity(value));
+ipcMain.on('hover', (event, isHovered) => widgets.setHovered(windowOf(event), Boolean(isHovered)));
 ipcMain.on('pin-app', (_event, entry) => pinApp(entry));
 ipcMain.on('app-menu', (event, name) => showAppMenu(name, windowOf(event)));
 ipcMain.on('media-command', (_event, command) => bridge?.send(`media ${command}`));
 ipcMain.on('audio-command', (_event, command) => bridge?.send(`audio ${command}`));
 ipcMain.on('hide', () => win.hide());
-ipcMain.on('resize', (event, height) => {
-  const window = windowOf(event);
-  if (window?.diva) resizeWindow(window, height);
-});
-ipcMain.on('resize-start', (event, side) => startResizeDrag(windowOf(event), side === 'left' ? 'left' : 'right'));
-ipcMain.on('resize-move', () => moveResizeDrag());
-ipcMain.on('resize-end', () => endResizeDrag());
+ipcMain.on('resize', (event, height) => widgets.resize(windowOf(event), height));
+ipcMain.on('resize-start', (event, side) => widgets.startResizeDrag(windowOf(event), side === 'left' ? 'left' : 'right'));
+ipcMain.on('resize-move', () => widgets.moveResizeDrag());
+ipcMain.on('resize-end', () => widgets.endResizeDrag());
 
 // --- Démarrage -----------------------------------------------------------------------
 
@@ -1040,10 +640,18 @@ if (!app.requestSingleInstanceLock()) {
     createTray();
     registerHotkey();
     watchConfig();
-    bridge = startBridge(BRIDGE_PATH);
+    bridge = createBridge({ script: BRIDGE_PATH, onMessage: broadcast, isQuitting: () => quitting });
+    updatePace();
     refreshRecentApps();
     getInstalledApps(); // préchargées : la recherche répond tout de suite
-    setupUpdates();
+    updates = createUpdates({
+      onReady: (status) => {
+        win.webContents.send('update', status);
+        refreshTrayMenu();
+      },
+      beforeInstall: () => { quitting = true; },
+    });
+    updates.start();
     setInterval(() => {
       installedApps = null;
       refreshRecentApps();
@@ -1053,7 +661,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     quitting = true;
-    bridge?.process?.stdin.end();
+    bridge?.stop();
   });
   app.on('will-quit', () => globalShortcut.unregisterAll());
   // Le widget vit dans la barre des tâches : on ne quitte pas quand la fenêtre est cachée.

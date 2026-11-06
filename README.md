@@ -36,7 +36,7 @@ npm version minor      # ou patch pour une petite correction : 0.4.0 -> 0.5.0, c
 git push --follow-tags # envoie le commit et le tag ; GitHub construit et publie l'installeur
 ```
 
-Suivi dans l'onglet **Actions** du dépôt (environ 5 min). La release est refusée si le tag ne correspond pas à `version` dans `package.json`.
+Suivi dans l'onglet **Actions** du dépôt (environ 5 min). GitHub lance d'abord les tests ; la release est refusée si un test échoue ou si le tag ne correspond pas à `version` dans `package.json`.
 
 En secours, à la main : `npm run dist`, puis une release GitHub avec le tag `v0.5.0` et les 3 fichiers de `dist/` (`Diva-Setup-0.5.0.exe`, `Diva-Setup-0.5.0.exe.blockmap`, `latest.yml`).
 
@@ -48,6 +48,10 @@ npm start
 ```
 
 La version installée et `npm start` partagent la même config (`%APPDATA%\Diva`) et ne peuvent pas tourner en même temps.
+
+```powershell
+npm test   # tests automatiques (dossier test/), aussi lancés par GitHub à chaque push
+```
 
 - `Ctrl+Alt+D` : afficher / masquer le widget (modifiable dans la config)
 - Glisser la barre du haut pour le déplacer : la position est retenue
@@ -122,13 +126,19 @@ Il analyse le son qui sort du PC (toutes les apps, pas seulement Spotify). Le so
 
 ```
 src/
-├── main.js            # fenêtre, barre des tâches, raccourci, config, lancement d'apps
-├── preload.js         # fonctions exposées à l'interface
+├── main.js            # config, grille d'apps, liens, recherche, barre des tâches ; relie les modules
+├── windows.js         # les widgets : principal et détachés, taille, aimantation, opacité
+├── bridge.js          # lance helpers/bridge.ps1 (musique et volume)
+├── paths.js           # chemins, liens et noms proposés (calcul pur, testé)
+├── icons.js           # icônes des apps et des sites
+├── updates.js         # mises à jour automatiques
 ├── spotify.js         # connexion Spotify et ❤
 ├── captures.js        # captures d'écran récentes
 ├── timer.js           # minuteur et Pomodoro
+├── preload.js         # fonctions exposées à l'interface
 ├── default-config.json
-└── renderer/          # l'interface du widget (HTML/CSS/JS)
+└── renderer/          # l'interface du widget (HTML/CSS/JS) ; search-logic.js : calculatrice et classement
+test/                  # tests automatiques (node --test)
 helpers/
 ├── bridge.ps1         # pont permanent avec Windows (un seul processus) : charge media.ps1 et audio.ps1
 ├── media.ps1          # module : contrôle média de Windows (titre, pochette, lecture, position)

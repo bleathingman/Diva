@@ -35,7 +35,23 @@ jobs:
 
       - run: npm ci
 
-      - name: Fabriquer et publier l'installeur
-        run: npm run release
+      # Pas de release si un test échoue.
+      - run: npm test
+
+      - name: Fabriquer l'installeur
+        run: npm run dist
+
+      # Release créée en une seule fois avec ses 3 fichiers. (electron-builder envoyait ses fichiers
+      # en parallèle, et chaque envoi pouvait créer sa propre release : v0.5.0 en a eu deux.)
+      - name: Publier la release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Diva-Setup-$version.exe" \
+            "dist/Diva-Setup-$version.exe.blockmap" \
+            dist/latest.yml \
+            --title "Diva $version" \
+            --generate-notes

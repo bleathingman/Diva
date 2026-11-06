@@ -8,8 +8,8 @@
   "private": true,
   "scripts": {
     "start": "set ELECTRON_RUN_AS_NODE=&& electron .",
-    "dist": "electron-builder --win nsis",
-    "release": "electron-builder --win nsis --publish always"
+    "dist": "electron-builder --win nsis --publish never",
+    "test": "node --test"
   },
   "build": {
     "appId": "com.bleathingman.diva",

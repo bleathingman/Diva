@@ -1,0 +1,25 @@
+# Lance les tests (npm test) à chaque push et sur chaque pull request.
+name: Tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      # Les tests n'ont pas besoin d'Electron lui-même : on évite de télécharger ~100 Mo.
+      - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+
+      - run: npm test
